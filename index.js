@@ -14,7 +14,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { Sky } from 'three/addons/objects/Sky.js';
-import { Timer } from 'three/addons/misc/Timer.js';
+import { Timer } from 'three';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -403,6 +403,162 @@ function appendTrail(x, y, z) {
   trailGeo.attributes.position.needsUpdate = true;
 }
 
+// ─── Mission Route & Waypoint Rendering ───────────────────────────────────────
+
+const routeGroup = new THREE.Group();
+routeGroup.name = 'missionRoute';
+scene.add(routeGroup);
+
+let lastRouteJSON = '';      // JSON cache to detect changes
+let lastActiveWp  = -1;      // last rendered active waypoint
+let wpMeshes      = [];      // references to waypoint sphere meshes for highlighting
+let wpGlowLights  = [];      // point lights on each waypoint
+
+// Materials
+const WP_MAT_INACTIVE = new THREE.MeshStandardMaterial({
+  color: 0x38bdf8, roughness: 0.3, metalness: 0.4,
+  emissive: new THREE.Color(0x38bdf8), emissiveIntensity: 0.4,
+});
+const WP_MAT_ACTIVE = new THREE.MeshStandardMaterial({
+  color: 0x4ade80, roughness: 0.15, metalness: 0.5,
+  emissive: new THREE.Color(0x4ade80), emissiveIntensity: 1.0,
+});
+const WP_LINE_MAT = new THREE.LineBasicMaterial({
+  color: 0xf59e0b, linewidth: 2, transparent: true, opacity: 0.85,
+});
+const WP_DROP_MAT = new THREE.LineDashedMaterial({
+  color: 0x94a3b8, dashSize: 1, gapSize: 0.5, transparent: true, opacity: 0.4,
+});
+const WP_LABEL_CANVAS_SIZE = 64;
+
+/**
+ * Create a small canvas texture with a waypoint number label.
+ */
+function createWpLabelSprite(seq) {
+  const canvas = document.createElement('canvas');
+  canvas.width = WP_LABEL_CANVAS_SIZE;
+  canvas.height = WP_LABEL_CANVAS_SIZE;
+  const ctx = canvas.getContext('2d');
+
+  // Circle background
+  ctx.beginPath();
+  ctx.arc(32, 32, 28, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(56, 189, 248, 0.8)';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  // Number
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 22px Inter, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(String(seq), 32, 33);
+
+  const tex = new THREE.CanvasTexture(canvas);
+  const spriteMat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false });
+  const sprite = new THREE.Sprite(spriteMat);
+  sprite.scale.set(3, 3, 1);
+  return sprite;
+}
+
+/**
+ * Build the full 3D route from telemetry.route waypoints.
+ * Called when the route data changes.
+ */
+function buildRouteVisuals(route, refLat, refLon) {
+  // Clear previous
+  while (routeGroup.children.length > 0) {
+    const child = routeGroup.children[0];
+    routeGroup.remove(child);
+    if (child.geometry) child.geometry.dispose();
+    if (child.material) {
+      if (child.material.map) child.material.map.dispose();
+      child.material.dispose();
+    }
+  }
+  wpMeshes = [];
+  wpGlowLights = [];
+
+  if (!route || route.length === 0) return;
+
+  const wpSphereGeo = new THREE.SphereGeometry(1.2, 16, 12);
+  const pathPoints = [];
+
+  route.forEach((wp, i) => {
+    const world = geoToWorld(wp.lat, wp.lon, refLat, refLon);
+    const alt = wp.alt || 50;
+    const pos = new THREE.Vector3(world.x, alt, world.z);
+    pathPoints.push(pos);
+
+    // ── Waypoint sphere ──────────────────────────────────────────────────
+    const sphere = new THREE.Mesh(wpSphereGeo, WP_MAT_INACTIVE.clone());
+    sphere.position.copy(pos);
+    sphere.castShadow = true;
+    sphere.userData.wpSeq = wp.seq;
+    routeGroup.add(sphere);
+    wpMeshes.push(sphere);
+
+    // ── Glow point light ─────────────────────────────────────────────────
+    const glow = new THREE.PointLight(0x38bdf8, 0.6, 15);
+    glow.position.copy(pos);
+    routeGroup.add(glow);
+    wpGlowLights.push(glow);
+
+    // ── Vertical drop-line to ground ─────────────────────────────────────
+    const dropGeo = new THREE.BufferGeometry().setFromPoints([
+      pos, new THREE.Vector3(world.x, 0.5, world.z),
+    ]);
+    const dropLine = new THREE.Line(dropGeo, WP_DROP_MAT.clone());
+    dropLine.computeLineDistances();
+    routeGroup.add(dropLine);
+
+    // ── Label sprite above waypoint ───────────────────────────────────────
+    const label = createWpLabelSprite(i);
+    label.position.set(world.x, alt + 3.5, world.z);
+    routeGroup.add(label);
+  });
+
+  // ── Path line connecting waypoints sequentially ────────────────────────
+  if (pathPoints.length >= 2) {
+    const pathGeo = new THREE.BufferGeometry().setFromPoints(pathPoints);
+    const pathLine = new THREE.Line(pathGeo, WP_LINE_MAT);
+    routeGroup.add(pathLine);
+
+    // Close the loop if more than 2 waypoints (mission typically returns to start)
+    if (pathPoints.length > 2) {
+      const loopGeo = new THREE.BufferGeometry().setFromPoints([
+        pathPoints[pathPoints.length - 1], pathPoints[0],
+      ]);
+      const loopLine = new THREE.Line(loopGeo, WP_LINE_MAT.clone());
+      loopLine.material.opacity = 0.4;
+      routeGroup.add(loopLine);
+    }
+  }
+
+  console.log(`[ROUTE] Built ${route.length} waypoint markers in 3D scene`);
+}
+
+/**
+ * Update the active waypoint highlight.
+ */
+function updateActiveWaypoint(activeSeq) {
+  wpMeshes.forEach((mesh, i) => {
+    const isActive = mesh.userData.wpSeq === activeSeq;
+    mesh.material.color.set(isActive ? 0x4ade80 : 0x38bdf8);
+    mesh.material.emissive.set(isActive ? 0x4ade80 : 0x38bdf8);
+    mesh.material.emissiveIntensity = isActive ? 1.2 : 0.4;
+    mesh.scale.setScalar(isActive ? 1.5 : 1.0);
+
+    if (wpGlowLights[i]) {
+      wpGlowLights[i].color.set(isActive ? 0x4ade80 : 0x38bdf8);
+      wpGlowLights[i].intensity = isActive ? 2.0 : 0.6;
+      wpGlowLights[i].distance = isActive ? 25 : 15;
+    }
+  });
+}
+
 // ─── Smooth State ─────────────────────────────────────────────────────────────
 
 let smoothRoll = 0, smoothPitch = 0, smoothYaw = 0, smoothAlt = 10;
@@ -696,6 +852,33 @@ function animate() {
     if (trailTimer > 0.25) {
       appendTrail(droneGroup.position.x, droneGroup.position.y, droneGroup.position.z);
       trailTimer = 0;
+    }
+
+    // ── Route / Waypoint Visualization ────────────────────────────────────
+    if (homeLat !== null && t.route && t.route.length > 0) {
+      const routeJSON = JSON.stringify(t.route);
+      if (routeJSON !== lastRouteJSON) {
+        lastRouteJSON = routeJSON;
+        buildRouteVisuals(t.route, homeLat, homeLon);
+        lastActiveWp = -1; // force active wp update
+      }
+      // Update active waypoint highlight
+      const currentWp = t.status?.active_wp ?? -1;
+      if (currentWp !== lastActiveWp) {
+        lastActiveWp = currentWp;
+        updateActiveWaypoint(currentWp);
+      }
+
+      // Pulse active waypoint glow
+      wpMeshes.forEach((mesh, i) => {
+        if (mesh.userData.wpSeq === currentWp) {
+          const pulse = 1.3 + Math.sin(performance.now() * 0.004) * 0.3;
+          mesh.scale.setScalar(pulse);
+          if (wpGlowLights[i]) {
+            wpGlowLights[i].intensity = 1.5 + Math.sin(performance.now() * 0.004) * 0.8;
+          }
+        }
+      });
     }
 
     updateHUD(t);
