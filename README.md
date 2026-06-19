@@ -116,6 +116,15 @@ Connect QGC to the SITL via UDP link: `localhost:14550`. Use QGC to arm the vehi
 | 1  | `SYS_STATUS` | `voltage_battery`, `current_battery`, `battery_remaining` |
 | 74 | `VFR_HUD` | `airspeed`, `groundspeed`, `heading`, `throttle`, `climb` |
 
+
+---
+
+## Gelecek Yol Haritası / Future Roadmap (TODO)
+
+- [ ] **ArduPilot yerine PX4 kullanımı (Switch to PX4 Autopilot):** ArduPilot SITL simülasyonu yerine PX4 SITL entegrasyonu gerçekleştirilecek ve MAVLink köprüsü PX4 uyumlu hale getirilecek.
+- [ ] **QGroundControl Rota ve Harita Entegrasyonu (QGC Route & Map Integration):** QGroundControl üzerinde tanımlanan uçuş rotaları ve harita verileri doğrudan Three.js 3D arayüzüne aktarılarak görselleştirilecek.
+- [ ] **Sanal Pixhawk ile Gerçekçi Çalıştırma Onayı (Virtual Pixhawk Validation):** Sistemin sanal bir Pixhawk (SITL/HITL) donanımı/simülasyonu ile uçtan uca gerçek zamanlı olarak kararlı çalıştığı doğrulanacak.
+
 ---
 
 ## Troubleshooting
