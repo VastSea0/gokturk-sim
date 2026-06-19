@@ -11,6 +11,36 @@
 
 'use strict';
 
+// ─── ArduCopter Flight Mode Map ───────────────────────────────────────────────
+// Maps ArduPilot HEARTBEAT custom_mode integer → human-readable name
+const ARDUCOPTER_MODES = {
+   0: 'STABILIZE',
+   1: 'ACRO',
+   2: 'ALT_HOLD',
+   3: 'AUTO',
+   4: 'GUIDED',
+   5: 'LOITER',
+   6: 'RTL',
+   7: 'CIRCLE',
+   9: 'LAND',
+  11: 'DRIFT',
+  13: 'SPORT',
+  14: 'FLIP',
+  15: 'AUTOTUNE',
+  16: 'POSHOLD',
+  17: 'BRAKE',
+  18: 'THROW',
+  19: 'AVOID_ADSB',
+  20: 'GUIDED_NOGPS',
+  21: 'SMART_RTL',
+  22: 'FLOWHOLD',
+  23: 'FOLLOW',
+  24: 'ZIGZAG',
+  25: 'SYSTEMID',
+  26: 'AUTOROTATE',
+  27: 'AUTO_RTL',
+};
+
 const dgram   = require('dgram');
 const { WebSocketServer } = require('ws');
 const MAVLink = require('mavlink');
@@ -102,8 +132,8 @@ if (IS_MOCK) {
   console.log('[MOCK] Mock mode active — generating synthetic telemetry');
 
   let t = 0; // time accumulator (seconds)
-  const HOME_LAT = 39.9334; // Ankara, Turkey (approximate)
-  const HOME_LON = 32.8597;
+  const HOME_LAT = 37.5748; // Kahramanmaraş Sütçüimam University (KSU Avşar Campus)
+  const HOME_LON = 36.9445;
 
   setInterval(() => {
     t += 0.05;
@@ -199,13 +229,26 @@ else {
     udpSocket.bind(CONFIG.udp.port, CONFIG.udp.host, () => {
       const addr = udpSocket.address();
       console.log(`[UDP] Listening for MAVLink packets on ${addr.address}:${addr.port}`);
-      console.log('[UDP] Make sure Docker is running: docker run -it --rm --platform linux/amd64 \\');
-      console.log('       -p 14550:14550/udp -p 14551:14551/udp radarku/ardupilot-sitl');
+      console.log('[UDP] Waiting for SITL packets. Docker command:');
+      console.log('       docker run -it --rm --platform linux/amd64 \\');
+      console.log('         -e LAT=37.5748 -e LON=36.9445 -e ALT=584 -e DIR=0 \\');
+      console.log('         radarku/ardupilot-sitl \\');
+      console.log('         $(docker run --rm radarku/ardupilot-sitl echo) \\');
+      console.log('         --out=udp:host.docker.internal:14550 \\');
+      console.log('         --out=udp:host.docker.internal:14551');
     });
 
     // ── Heartbeat ────────────────────────────────────────────────────────────
     mav.on('HEARTBEAT', (_msg, fields) => {
-      telemetry.status.armed         = isArmed(fields.base_mode);
+      const armed = isArmed(fields.base_mode);
+      const mode  = ARDUCOPTER_MODES[fields.custom_mode] || `MODE_${fields.custom_mode}`;
+
+      if (armed !== telemetry.status.armed || mode !== telemetry.status.mode) {
+        console.log(`[MAV] State: ${armed ? 'ARMED' : 'DISARMED'} | Mode: ${mode}`);
+      }
+
+      telemetry.status.armed         = armed;
+      telemetry.status.mode          = mode;
       telemetry.status.system_status = fields.system_status;
       telemetry.status.connected     = true;
     });
