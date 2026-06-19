@@ -18,6 +18,10 @@
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies": {
-    "node-mavlink": "^2.3.0"
+    "node-mavlink": "^2.3.0",
+    "three": "^0.184.0"
+  },
+  "devDependencies": {
+    "vite": "^8.0.16"
   }
 }
