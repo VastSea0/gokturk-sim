@@ -1,0 +1,23 @@
+{
+  "name": "gokturk-uav-sim",
+  "version": "1.0.0",
+  "description": "gokturk-uav sim ",
+  "homepage": "https://github.com/GK-Developers/gokturk-sim#readme",
+  "bugs": {
+    "url": "https://github.com/GK-Developers/gokturk-sim/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/GK-Developers/gokturk-sim.git"
+  },
+  "license": "ISC",
+  "author": "Egehan KAHRAMAN, Mustafa GÖKPINAR",
+  "type": "commonjs",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "node-mavlink": "^2.3.0"
+  }
+}
