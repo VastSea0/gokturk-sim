@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Göktürk UAV — Real-time 3D telemetry visualization for ArduPilot SITL simulation. Displays live attitude, position, battery and flight data from a virtual UAV." />
+    <title>Göktürk UAV — Live 3D Telemetry</title>
+
+    <!-- Google Fonts: Inter for UI, JetBrains Mono for data readouts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+
+    <!-- ── Three.js Canvas ────────────────────────────────────────────────── -->
+    <canvas id="canvas-3d"></canvas>
+
+    <!-- ── Top Bar ───────────────────────────────────────────────────────── -->
+    <header id="top-bar">
+      <div id="logo">
+        <svg width="28" height="28" viewBox="0 0 28 28" fill="none" aria-hidden="true">
+          <polygon points="14,2 26,22 2,22" fill="none" stroke="#f59e0b" stroke-width="2"/>
+          <line x1="14" y1="9" x2="14" y2="17" stroke="#f59e0b" stroke-width="2"/>
+          <circle cx="14" cy="19.5" r="1.5" fill="#f59e0b"/>
+        </svg>
+        <span class="logo-text">GÖKTÜRK <em>SIM</em></span>
+      </div>
+
+      <div id="connection-badge">
+        <span id="conn-dot" class="dot dot--disconnected"></span>
+        <span id="conn-label">DISCONNECTED</span>
+      </div>
+
+      <div id="clock" aria-label="Current UTC time">--:--:-- UTC</div>
+    </header>
+
+    <!-- ── HUD Overlay (all panels) ──────────────────────────────────────── -->
+    <div id="hud" role="complementary" aria-label="Flight telemetry HUD">
+
+      <!-- ── LEFT: Attitude ──────────────────────────────────────────────── -->
+      <section class="hud-panel" id="panel-attitude" aria-label="Attitude">
+        <h2 class="panel-title">ATTITUDE</h2>
+
+        <div class="attitude-indicator" id="adi" aria-label="Artificial horizon">
+          <canvas id="adi-canvas" width="140" height="140"></canvas>
+        </div>
+
+        <div class="data-grid">
+          <div class="data-row">
+            <span class="data-label">ROLL</span>
+            <span class="data-value" id="val-roll">0.00°</span>
+          </div>
+          <div class="data-row">
+            <span class="data-label">PITCH</span>
+            <span class="data-value" id="val-pitch">0.00°</span>
+          </div>
+          <div class="data-row">
+            <span class="data-label">YAW</span>
+            <span class="data-value" id="val-yaw">0.00°</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── LEFT: Battery ───────────────────────────────────────────────── -->
+      <section class="hud-panel" id="panel-battery" aria-label="Battery status">
+        <h2 class="panel-title">BATTERY</h2>
+        <div class="battery-visual" id="battery-visual" aria-label="Battery level">
+          <div class="battery-fill" id="battery-fill"></div>
+          <span class="battery-pct" id="battery-pct">--%</span>
+        </div>
+        <div class="data-grid">
+          <div class="data-row">
+            <span class="data-label">VOLT</span>
+            <span class="data-value" id="val-voltage">--.-V</span>
+          </div>
+          <div class="data-row">
+            <span class="data-label">CURR</span>
+            <span class="data-value" id="val-current">--.-A</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── RIGHT: Position ─────────────────────────────────────────────── -->
+      <section class="hud-panel hud-panel--right" id="panel-position" aria-label="Position data">
+        <h2 class="panel-title">POSITION</h2>
+        <div class="data-grid">
+          <div class="data-row">
+            <span class="data-label">LAT</span>
+            <span class="data-value mono" id="val-lat">--.------°</span>
+          </div>
+          <div class="data-row">
+            <span class="data-label">LON</span>
+            <span class="data-value mono" id="val-lon">--.------°</span>
+          </div>
+          <div class="data-row">
+            <span class="data-label">ALT AGL</span>
+            <span class="data-value" id="val-alt">--- m</span>
+          </div>
+          <div class="data-row">
+            <span class="data-label">ALT MSL</span>
+            <span class="data-value" id="val-alt-msl">--- m</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── RIGHT: Flight ───────────────────────────────────────────────── -->
+      <section class="hud-panel hud-panel--right" id="panel-flight" aria-label="Flight performance">
+        <h2 class="panel-title">FLIGHT</h2>
+        <div class="data-grid">
+          <div class="data-row">
+            <span class="data-label">GND SPD</span>
+            <span class="data-value" id="val-groundspeed">-.-- m/s</span>
+          </div>
+          <div class="data-row">
+            <span class="data-label">AIR SPD</span>
+            <span class="data-value" id="val-airspeed">-.-- m/s</span>
+          </div>
+          <div class="data-row">
+            <span class="data-label">HEADING</span>
+            <span class="data-value" id="val-heading">---°</span>
+          </div>
+          <div class="data-row">
+            <span class="data-label">CLIMB</span>
+            <span class="data-value" id="val-climb">-.-- m/s</span>
+          </div>
+        </div>
+        <!-- Throttle bar -->
+        <div class="throttle-container" aria-label="Throttle">
+          <span class="data-label">THROTTLE</span>
+          <div class="throttle-track">
+            <div class="throttle-fill" id="throttle-fill"></div>
+          </div>
+          <span class="data-value" id="val-throttle">--%</span>
+        </div>
+      </section>
+
+      <!-- ── BOTTOM: Mode / Arm status ───────────────────────────────────── -->
+      <div id="status-bar">
+        <div class="status-pill" id="arm-pill">
+          <span id="arm-label">DISARMED</span>
+        </div>
+        <div class="status-pill" id="mode-pill">
+          <span id="mode-label">---</span>
+        </div>
+        <div id="ws-latency">WS: --- ms</div>
+      </div>
+
+    </div><!-- /#hud -->
+
+    <!-- ── Camera Controls Hint ───────────────────────────────────────────── -->
+    <div id="controls-hint" aria-label="Camera controls">
+      <span>🖱 Drag to orbit</span>
+      <span>⚲ Scroll to zoom</span>
+      <span>⇧ Shift+drag to pan</span>
+    </div>
+
+    <script type="module" src="index.js"></script>
+  </body>
+</html>
