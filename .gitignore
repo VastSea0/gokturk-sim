@@ -1,3 +1,30 @@
-node_modules
+# Dependencies
+node_modules/
+
+# Vite build output
+dist/
+.vite/
+
+# Environment variables
 .env
-yarn.lock
+.env.local
+.env.*.local
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Editor configs
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+npm-debug.log*
+
+# Runtime
+*.pid
+*.seed
