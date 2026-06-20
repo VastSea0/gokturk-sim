@@ -452,12 +452,13 @@ let uploadState = {
   items: []
 };
 
-// Send a MISSION_REQUEST back to QGC
+// Send a MISSION_REQUEST_INT back to QGC
 function requestMissionItemFromQGC(seq, targetSys, targetComp) {
-  mav.createMessage('MISSION_REQUEST', {
+  mav.createMessage('MISSION_REQUEST_INT', {
     target_system: targetSys,
     target_component: targetComp,
-    seq: seq
+    seq: seq,
+    mission_type: 0
   }, (reqMsg) => {
     sendToQGC(reqMsg.buffer);
   });
@@ -672,7 +673,7 @@ function setupMAVLinkListeners() {
     });
   });
 
-  function handleMissionItemRequest(fields, targetSys, targetComp) {
+  function handleMissionItemRequest(fields, targetSys, targetComp, useInt) {
     const seq = fields.seq;
     if (seq < 0 || seq >= simState.route.length) {
       console.warn(`[MAV] Requested out of bounds waypoint seq: ${seq}`);
@@ -680,6 +681,7 @@ function setupMAVLinkListeners() {
     }
 
     const wp = simState.route[seq];
+    const msgType = useInt ? 'MISSION_ITEM_INT' : 'MISSION_ITEM';
     const payload = {
       target_system: targetSys,
       target_component: targetComp,
@@ -692,18 +694,23 @@ function setupMAVLinkListeners() {
       param2: 0,
       param3: 0,
       param4: 0,
-      x: wp.lat,
-      y: wp.lon,
-      z: wp.alt
+      x: useInt ? Math.round(wp.lat * 1e7) : wp.lat,
+      y: useInt ? Math.round(wp.lon * 1e7) : wp.lon,
+      z: wp.alt,
+      mission_type: 0
     };
 
-    mav.createMessage('MISSION_ITEM', payload, (itemMsg) => {
+    mav.createMessage(msgType, payload, (itemMsg) => {
       sendToQGC(itemMsg.buffer);
     });
   }
 
+  mav.on('MISSION_REQUEST_INT', (msg, fields) => {
+    handleMissionItemRequest(fields, msg.system, msg.component, true);
+  });
+
   mav.on('MISSION_REQUEST', (msg, fields) => {
-    handleMissionItemRequest(fields, msg.system, msg.component);
+    handleMissionItemRequest(fields, msg.system, msg.component, false);
   });
 
   mav.on('MISSION_CLEAR_ALL', (msg, fields) => {
