@@ -1245,12 +1245,20 @@ function initMapControls() {
       }
     });
   }
+
+  const elFollow = document.getElementById('camera-follow');
+  if (elFollow) {
+    elFollow.addEventListener('change', (e) => {
+      cameraFollow = e.target.checked;
+    });
+  }
 }
 
 // ─── Smooth State ─────────────────────────────────────────────────────────────
 
 let smoothRoll = 0, smoothPitch = 0, smoothYaw = 0, smoothAlt = 10;
 let homeLat = null, homeLon = null;
+let cameraFollow = true;
 // tilesLoaded replaced by tileManager !== null check
 
 // ─── WebSocket Client ─────────────────────────────────────────────────────────

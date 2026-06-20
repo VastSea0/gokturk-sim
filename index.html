@@ -130,7 +130,10 @@
           </div>
           <div class="data-row">
             <span class="data-label">ALT AGL</span>
-            <span class="data-value" id="val-alt">--- m</span>
+            <div class="value-with-trend">
+              <span class="data-value" id="val-alt">--- m</span>
+              <span id="alt-trend" class="trend-indicator trend-level">―</span>
+            </div>
           </div>
           <div class="data-row">
             <span class="data-label">ALT MSL</span>
@@ -224,6 +227,10 @@
       <section class="hud-panel hud-panel--right" id="panel-map" aria-label="Map settings">
         <h2 class="panel-title">MAP SETTINGS</h2>
         <div class="map-controls">
+          <label class="control-row">
+            <span class="control-label">Follow UAV</span>
+            <input type="checkbox" id="camera-follow" checked />
+          </label>
           <div class="control-row">
             <span class="control-label">Provider</span>
             <select id="map-provider" class="map-select">

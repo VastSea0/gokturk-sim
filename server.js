@@ -92,6 +92,7 @@ let target_alt = 0;
 let telemetry = {
   attitude: { roll: 0, pitch: 0, yaw: 0, rollspeed: 0, pitchspeed: 0, yawspeed: 0 },
   position: { lat: HOME_LAT, lon: HOME_LON, alt: HOME_ALT, relative_alt: 0, vx: 0, vy: 0, vz: 0 },
+  home:     { lat: HOME_LAT, lon: HOME_LON, alt: HOME_ALT },
   battery:  { voltage: 16.8, current: 0.5, remaining: 100 },
   vfr:      { airspeed: 0, groundspeed: 0, heading: 0, throttle: 0, climb: 0 },
   status:   { armed: false, mode: 'POSCTL', system_status: 3, connected: true, active_wp: 0 },
@@ -345,7 +346,11 @@ function updatePhysics() {
     const dx = dLat * MPDL;
     const dy = dLon * MPDL * cosLat;
     const dist = Math.sqrt(dx * dx + dy * dy);
-    const dAlt = wp.alt - simState.alt;
+    let targetAlt = wp.alt;
+    if (simState.active_wp === 0 && targetAlt < 2) {
+      targetAlt = 10;
+    }
+    const dAlt = targetAlt - simState.alt;
 
     // Adjust altitude
     if (Math.abs(dAlt) > 0.5) {
@@ -426,6 +431,11 @@ function updateTelemetryObject() {
       vy: simState.speed * Math.sin(simState.yaw) * 100,
       vz: -simState.climb * 100,
     },
+    home: {
+      lat: HOME_LAT,
+      lon: HOME_LON,
+      alt: HOME_ALT,
+    },
     battery: {
       voltage: (simState.armed ? 15.2 : 16.8) * (simState.battery_remaining / 100),
       current: simState.armed ? (12.0 + Math.abs(simState.climb) * 4.0) : 0.5,
@@ -495,7 +505,11 @@ function setupMAVLinkListeners() {
         break;
 
       case 22: // MAV_CMD_NAV_TAKEOFF
-        simState.takeoff_alt = fields.param7 || 10;
+        let targetAlt = fields.param7 || 10;
+        if (targetAlt > 100) {
+          targetAlt = Math.max(2, targetAlt - HOME_ALT);
+        }
+        simState.takeoff_alt = targetAlt;
         simState.is_taking_off = true;
         simState.flightMode = 'AUTO_TAKEOFF';
         console.log(`[SIM] Takeoff initiated to ${simState.takeoff_alt}m`);
@@ -742,6 +756,44 @@ function setupMAVLinkListeners() {
 
   mav.on('MISSION_ACK', (msg, fields) => {
     console.log(`[MAV] Mission ACK received: type=${fields.type}`);
+  });
+
+  mav.on('SET_MODE', (msg, fields) => {
+    const customMode = fields.custom_mode;
+    const mainMode = (customMode >> 16) & 0xFF;
+    const subMode = (customMode >> 24) & 0xFF;
+
+    console.log(`[MAV] SET_MODE custom_mode=${customMode} mainMode=${mainMode} subMode=${subMode}`);
+
+    if (mainMode === 3) {
+      simState.flightMode = 'POSCTL';
+      simState.is_taking_off = false;
+      simState.is_landing = false;
+      simState.is_rtl = false;
+    } else if (mainMode === 4) {
+      if (subMode === 2) {
+        simState.flightMode = 'AUTO_TAKEOFF';
+        simState.is_taking_off = true;
+        simState.is_landing = false;
+        simState.is_rtl = false;
+      } else if (subMode === 4) {
+        simState.flightMode = 'AUTO_MISSION';
+        simState.is_taking_off = false;
+        simState.is_landing = false;
+        simState.is_rtl = false;
+      } else if (subMode === 5) {
+        simState.flightMode = 'AUTO_RTL';
+        simState.is_rtl = true;
+        simState.is_taking_off = false;
+        simState.is_landing = false;
+      } else if (subMode === 6) {
+        simState.flightMode = 'AUTO_LAND';
+        simState.is_landing = true;
+        simState.is_taking_off = false;
+        simState.is_rtl = false;
+      }
+    }
+    console.log(`[SIM] Flight mode updated from QGC SET_MODE: ${simState.flightMode}`);
   });
 }
 
