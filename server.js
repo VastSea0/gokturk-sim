@@ -34,8 +34,8 @@ const CONFIG = {
 };
 
 // ─── Home Coordinates (Kahramanmaraş Sütçüimam University) ───────────────────
-const HOME_LAT = 37.5748;
-const HOME_LON = 36.9445;
+const HOME_LAT = 37.5512;
+const HOME_LON = 36.9196;
 const HOME_ALT = 584; // elevation in meters
 const MPDL = 111319.5; // meters per degree latitude
 const cosLat = Math.cos(HOME_LAT * Math.PI / 180);
@@ -625,13 +625,16 @@ function setupMAVLinkListeners() {
     if (uploadState.receivedCount < uploadState.expectedCount) {
       requestMissionItemFromQGC(uploadState.receivedCount, targetSys, targetComp);
     } else {
-      // Completed upload
-      simState.route = uploadState.items.filter(Boolean).map((wp) => ({
-        seq: wp.seq,
-        lat: wp.lat,
-        lon: wp.lon,
-        alt: wp.alt
-      }));
+      // Completed upload - filter out dummy coordinates (0, 0)
+      simState.route = uploadState.items
+        .filter(Boolean)
+        .filter(wp => wp.lat !== 0 || wp.lon !== 0)
+        .map((wp) => ({
+          seq: wp.seq,
+          lat: wp.lat,
+          lon: wp.lon,
+          alt: wp.alt
+        }));
 
       simState.active_wp = 0;
       uploadState.active = false;

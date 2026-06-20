@@ -629,6 +629,7 @@ function buildRouteVisuals(route, refLat, refLon) {
   const pathPoints = [];
 
   route.forEach((wp, i) => {
+    if (!wp || (wp.lat === 0 && wp.lon === 0)) return; // Skip dummy coordinates (e.g. Home position metadata or RTL without explicit coordinates)
     const world = geoToWorld(wp.lat, wp.lon, refLat, refLon);
     const alt = wp.alt || 50;
     const pos = new THREE.Vector3(world.x, alt, world.z);
