@@ -40,6 +40,13 @@ const HOME_ALT = 584; // elevation in meters
 const MPDL = 111319.5; // meters per degree latitude
 const cosLat = Math.cos(HOME_LAT * Math.PI / 180);
 
+function getHeadingDeg(yawRad) {
+  let deg = (yawRad * 180 / Math.PI) % 360;
+  if (deg < 0) deg += 360;
+  return deg;
+}
+
+
 // Generate default hexagonal route (used if no mission is uploaded)
 const MOCK_ROUTE_RADIUS = 0.0015; // ~167 m
 const MOCK_WP_COUNT = 6;
@@ -427,7 +434,7 @@ function updateTelemetryObject() {
     vfr: {
       airspeed: simState.speed,
       groundspeed: simState.speed,
-      heading: Math.round((simState.yaw * 180 / Math.PI + 360) % 360),
+      heading: Math.round(getHeadingDeg(simState.yaw)),
       throttle: simState.armed ? Math.round(40 + (simState.climb * 10) + simState.speed * 2) : 0,
       climb: simState.climb,
     },
@@ -837,7 +844,7 @@ mav.on('ready', () => {
       vx: Math.round(simState.speed * Math.cos(simState.yaw) * 100),
       vy: Math.round(simState.speed * Math.sin(simState.yaw) * 100),
       vz: Math.round(-simState.climb * 100),
-      hdg: Math.round(((simState.yaw * 180 / Math.PI + 360) % 360) * 100)
+      hdg: Math.round(getHeadingDeg(simState.yaw) * 100)
     }, (msg) => {
       sendToQGC(msg.buffer);
     });
@@ -846,7 +853,7 @@ mav.on('ready', () => {
     mav.createMessage('VFR_HUD', {
       airspeed: simState.speed,
       groundspeed: simState.speed,
-      heading: Math.round((simState.yaw * 180 / Math.PI + 360) % 360),
+      heading: Math.round(getHeadingDeg(simState.yaw)),
       throttle: simState.armed ? Math.round(40 + (simState.climb * 10) + simState.speed * 2) : 0,
       alt: simState.alt + HOME_ALT,
       climb: simState.climb

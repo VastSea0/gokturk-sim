@@ -522,27 +522,109 @@ scene.add(shadowBlob);
 
 // ─── Flight-path Trail ────────────────────────────────────────────────────────
 
-const TRAIL_LEN   = 200;
-const trailPos    = new Float32Array(TRAIL_LEN * 3);
-const trailGeo    = new THREE.BufferGeometry();
-trailGeo.setAttribute('position', new THREE.BufferAttribute(trailPos, 3));
-trailGeo.setDrawRange(0, 0);
+const MAX_TRAIL_POINTS = 300;
+const trailPoints = [];
 
-const trailLine = new THREE.Line(trailGeo,
-  new THREE.LineBasicMaterial({ color: 0xf59e0b, transparent: true, opacity: 0.55 })
-);
+const trailGeo = new THREE.BufferGeometry();
+const trailMat = new THREE.LineBasicMaterial({
+  vertexColors: true,
+  transparent: true,
+  opacity: 0.9
+});
+const trailLine = new THREE.Line(trailGeo, trailMat);
 scene.add(trailLine);
 
-let trailIdx   = 0;
-let trailCount = 0;
+const curtainGeo = new THREE.BufferGeometry();
+const curtainMat = new THREE.MeshBasicMaterial({
+  vertexColors: true,
+  transparent: true,
+  opacity: 0.25,
+  side: THREE.DoubleSide,
+  depthWrite: false,
+  blending: THREE.AdditiveBlending
+});
+const trailCurtain = new THREE.Mesh(curtainGeo, curtainMat);
+scene.add(trailCurtain);
 
 function appendTrail(x, y, z) {
-  const i = (trailIdx % TRAIL_LEN) * 3;
-  trailPos[i] = x; trailPos[i+1] = y; trailPos[i+2] = z;
-  trailIdx++;
-  trailCount = Math.min(trailCount + 1, TRAIL_LEN);
-  trailGeo.setDrawRange(0, trailCount);
-  trailGeo.attributes.position.needsUpdate = true;
+  trailPoints.push(new THREE.Vector3(x, y, z));
+  if (trailPoints.length > MAX_TRAIL_POINTS) {
+    trailPoints.shift();
+  }
+
+  const N = trailPoints.length;
+  if (N < 2) return;
+
+  // ── Update Trail Line ───────────────────────────────────────────────
+  const linePositions = new Float32Array(N * 3);
+  const lineColors = new Float32Array(N * 3);
+
+  for (let i = 0; i < N; i++) {
+    const p = trailPoints[i];
+    const t = i / (N - 1 || 1); // Age factor [0, 1]
+
+    linePositions[i * 3] = p.x;
+    linePositions[i * 3 + 1] = p.y;
+    linePositions[i * 3 + 2] = p.z;
+
+    // Fade to brand amber (RGB: 0.96, 0.62, 0.04)
+    lineColors[i * 3] = 0.96 * t;
+    lineColors[i * 3 + 1] = 0.62 * t;
+    lineColors[i * 3 + 2] = 0.04 * t;
+  }
+
+  trailGeo.setAttribute('position', new THREE.BufferAttribute(linePositions, 3));
+  trailGeo.setAttribute('color', new THREE.BufferAttribute(lineColors, 3));
+  trailGeo.computeBoundingBox();
+  trailGeo.computeBoundingSphere();
+
+  // ── Update Trail Curtain ─────────────────────────────────────────────
+  const curtainPositions = new Float32Array(N * 2 * 3);
+  const curtainColors = new Float32Array(N * 2 * 3);
+  const curtainIndices = [];
+
+  for (let i = 0; i < N; i++) {
+    const p = trailPoints[i];
+    const t = i / (N - 1 || 1); // Age factor [0, 1]
+
+    // Top vertex (flight path)
+    const idxTop = i * 2;
+    curtainPositions[idxTop * 3] = p.x;
+    curtainPositions[idxTop * 3 + 1] = p.y;
+    curtainPositions[idxTop * 3 + 2] = p.z;
+
+    curtainColors[idxTop * 3] = 0.96 * t;
+    curtainColors[idxTop * 3 + 1] = 0.62 * t;
+    curtainColors[idxTop * 3 + 2] = 0.04 * t;
+
+    // Bottom vertex (ground projection)
+    const idxBot = i * 2 + 1;
+    curtainPositions[idxBot * 3] = p.x;
+    curtainPositions[idxBot * 3 + 1] = 0.15; // slightly above ground to prevent z-fighting
+    curtainPositions[idxBot * 3 + 2] = p.z;
+
+    // Bottom color: black (blends to 0 in Additive Blending)
+    curtainColors[idxBot * 3] = 0;
+    curtainColors[idxBot * 3 + 1] = 0;
+    curtainColors[idxBot * 3 + 2] = 0;
+
+    if (i < N - 1) {
+      const t0 = i * 2;
+      const b0 = i * 2 + 1;
+      const t1 = (i + 1) * 2;
+      const b1 = (i + 1) * 2 + 1;
+
+      // Quad triangles
+      curtainIndices.push(t0, b0, t1);
+      curtainIndices.push(b0, b1, t1);
+    }
+  }
+
+  curtainGeo.setAttribute('position', new THREE.BufferAttribute(curtainPositions, 3));
+  curtainGeo.setAttribute('color', new THREE.BufferAttribute(curtainColors, 3));
+  curtainGeo.setIndex(curtainIndices);
+  curtainGeo.computeBoundingBox();
+  curtainGeo.computeBoundingSphere();
 }
 
 // ─── Mission Route & Waypoint Rendering ───────────────────────────────────────
@@ -571,7 +653,58 @@ const WP_LINE_MAT = new THREE.LineBasicMaterial({
 const WP_DROP_MAT = new THREE.LineDashedMaterial({
   color: 0x94a3b8, dashSize: 1, gapSize: 0.5, transparent: true, opacity: 0.4,
 });
+
+// Slope-based Segment Materials
+const SEGMENT_CLIMB_MAT = new THREE.LineBasicMaterial({
+  color: 0x10b981, linewidth: 2, transparent: true, opacity: 0.85
+});
+const SEGMENT_DESCEND_MAT = new THREE.LineBasicMaterial({
+  color: 0xf59e0b, linewidth: 2, transparent: true, opacity: 0.85
+});
+const SEGMENT_CRUISE_MAT = new THREE.LineBasicMaterial({
+  color: 0x38bdf8, linewidth: 2, transparent: true, opacity: 0.85
+});
+
+const CONE_CLIMB_MAT = new THREE.MeshBasicMaterial({
+  color: 0x10b981, transparent: true, opacity: 0.8, side: THREE.DoubleSide
+});
+const CONE_DESCEND_MAT = new THREE.MeshBasicMaterial({
+  color: 0xf59e0b, transparent: true, opacity: 0.8, side: THREE.DoubleSide
+});
+const CONE_CRUISE_MAT = new THREE.MeshBasicMaterial({
+  color: 0x38bdf8, transparent: true, opacity: 0.8, side: THREE.DoubleSide
+});
+
 const WP_LABEL_CANVAS_SIZE = 64;
+
+function createSegmentLabelSprite(text, color) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 128;
+  canvas.height = 32;
+  const ctx = canvas.getContext('2d');
+  
+  // Capsule background
+  ctx.beginPath();
+  ctx.roundRect(4, 4, 120, 24, 12);
+  ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+  ctx.fill();
+  ctx.strokeStyle = `rgba(${Math.round(color.r * 255)}, ${Math.round(color.g * 255)}, ${Math.round(color.b * 255)}, 0.8)`;
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  
+  // Text
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 10px Inter, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, 64, 16);
+  
+  const tex = new THREE.CanvasTexture(canvas);
+  const spriteMat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false });
+  const sprite = new THREE.Sprite(spriteMat);
+  sprite.scale.set(6, 1.5, 1);
+  return sprite;
+}
 
 /**
  * Create a small canvas texture with a waypoint number label.
@@ -605,6 +738,16 @@ function createWpLabelSprite(seq) {
   return sprite;
 }
 
+function updateActiveWaypoint(activeSeq) {
+  wpMeshes.forEach((mesh) => {
+    if (mesh.userData.wpSeq === activeSeq) {
+      mesh.material = WP_MAT_ACTIVE;
+    } else {
+      mesh.material = WP_MAT_INACTIVE;
+    }
+  });
+}
+
 /**
  * Build the full 3D route from telemetry.route waypoints.
  * Called when the route data changes.
@@ -635,8 +778,8 @@ function buildRouteVisuals(route, refLat, refLon) {
     const pos = new THREE.Vector3(world.x, alt, world.z);
     pathPoints.push(pos);
 
-    // ── Waypoint sphere ──────────────────────────────────────────────────
-    const sphere = new THREE.Mesh(wpSphereGeo, WP_MAT_INACTIVE.clone());
+    // ── Waypoint sphere (Use WP_MAT_INACTIVE directly, no clone) ───────────
+    const sphere = new THREE.Mesh(wpSphereGeo, WP_MAT_INACTIVE);
     sphere.position.copy(pos);
     sphere.castShadow = true;
     sphere.userData.wpSeq = wp.seq;
@@ -665,18 +808,76 @@ function buildRouteVisuals(route, refLat, refLon) {
 
   // ── Path line connecting waypoints sequentially ────────────────────────
   if (pathPoints.length >= 2) {
-    const pathGeo = new THREE.BufferGeometry().setFromPoints(pathPoints);
-    const pathLine = new THREE.Line(pathGeo, WP_LINE_MAT);
-    routeGroup.add(pathLine);
+    for (let i = 0; i < pathPoints.length - 1; i++) {
+      const pStart = pathPoints[i];
+      const pEnd = pathPoints[i+1];
+      const dAlt = pEnd.y - pStart.y;
+      
+      let matLine = SEGMENT_CRUISE_MAT;
+      let matCone = CONE_CRUISE_MAT;
+      let typeLabel = "CRUISE";
+      
+      if (dAlt > 2) {
+        matLine = SEGMENT_CLIMB_MAT;
+        matCone = CONE_CLIMB_MAT;
+        typeLabel = `CLIMB (+${Math.round(dAlt)}m)`;
+      } else if (dAlt < -2) {
+        matLine = SEGMENT_DESCEND_MAT;
+        matCone = CONE_DESCEND_MAT;
+        typeLabel = `DESCEND (-${Math.round(Math.abs(dAlt))}m)`;
+      } else {
+        typeLabel = `CRUISE (${Math.round(pStart.y)}m)`;
+      }
+      
+      // Segment line
+      const segGeo = new THREE.BufferGeometry().setFromPoints([pStart, pEnd]);
+      const segLine = new THREE.Line(segGeo, matLine);
+      routeGroup.add(segLine);
+      
+      // Direction cone in the middle of segment
+      const midPoint = new THREE.Vector3().addVectors(pStart, pEnd).multiplyScalar(0.5);
+      const coneGeo = new THREE.ConeGeometry(0.8, 3.0, 8);
+      const coneMesh = new THREE.Mesh(coneGeo, matCone);
+      coneMesh.position.copy(midPoint);
+      
+      const direction = new THREE.Vector3().subVectors(pEnd, pStart).normalize();
+      coneMesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction);
+      routeGroup.add(coneMesh);
+
+      // Add segment slope label
+      const labelSprite = createSegmentLabelSprite(typeLabel, matCone.color);
+      labelSprite.position.copy(midPoint).y += 2.5;
+      routeGroup.add(labelSprite);
+    }
 
     // Close the loop if more than 2 waypoints (mission typically returns to start)
     if (pathPoints.length > 2) {
-      const loopGeo = new THREE.BufferGeometry().setFromPoints([
-        pathPoints[pathPoints.length - 1], pathPoints[0],
-      ]);
-      const loopLine = new THREE.Line(loopGeo, WP_LINE_MAT.clone());
-      loopLine.material.opacity = 0.4;
+      const pStart = pathPoints[pathPoints.length - 1];
+      const pEnd = pathPoints[0];
+      const dAlt = pEnd.y - pStart.y;
+      
+      let matLine = WP_LINE_MAT.clone();
+      matLine.opacity = 0.4;
+      
+      const loopGeo = new THREE.BufferGeometry().setFromPoints([pStart, pEnd]);
+      const loopLine = new THREE.Line(loopGeo, matLine);
       routeGroup.add(loopLine);
+
+      // 3D cone for RTL loop back
+      const midPoint = new THREE.Vector3().addVectors(pStart, pEnd).multiplyScalar(0.5);
+      const coneGeo = new THREE.ConeGeometry(0.6, 2.2, 8);
+      const coneMesh = new THREE.Mesh(coneGeo, new THREE.MeshBasicMaterial({
+        color: 0xf59e0b, transparent: true, opacity: 0.4, side: THREE.DoubleSide
+      }));
+      coneMesh.position.copy(midPoint);
+      const direction = new THREE.Vector3().subVectors(pEnd, pStart).normalize();
+      coneMesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction);
+      routeGroup.add(coneMesh);
+
+      const labelSprite = createSegmentLabelSprite("RTL", new THREE.Color(0xf59e0b));
+      labelSprite.position.copy(midPoint).y += 2.2;
+      labelSprite.material.opacity = 0.4;
+      routeGroup.add(labelSprite);
     }
   }
 
@@ -808,7 +1009,14 @@ function createRunway(options = {}) {
 
   // Rotate group
   runwayGroup.rotation.y = -heading * Math.PI / 180;
-  runwayGroup.position.set(offsetX, 0.16, offsetZ);
+  
+  let posX = offsetX;
+  let posZ = offsetZ;
+  if (options.autoAlign && options.posWp0X !== undefined) {
+    posX += options.posWp0X;
+    posZ += options.posWp0Z;
+  }
+  runwayGroup.position.set(posX, 0.16, posZ);
 
   scene.add(runwayGroup);
 }
@@ -867,6 +1075,12 @@ function triggerAutoAlign(route) {
     if (headingDeg < 0) headingDeg += 360;
     
     runwaySettings.heading = Math.round(headingDeg);
+    
+    if (homeLat !== null) {
+      const worldWp0 = geoToWorld(wp0.lat, wp0.lon, homeLat, homeLon);
+      runwaySettings.posWp0X = worldWp0.x;
+      runwaySettings.posWp0Z = worldWp0.z;
+    }
     
     const elHeading = document.getElementById('runway-heading');
     const elHeadingVal = document.getElementById('val-runway-heading');
@@ -953,6 +1167,17 @@ function initSimulationAndRunway() {
 
   elBtnReset.addEventListener('click', () => {
     sendWsCommand({ type: 'reset' });
+    trailPoints.length = 0;
+    // Disposing old attributes to clear the canvas visually
+    if (trailGeo.attributes.position) {
+      trailGeo.removeAttribute('position');
+      trailGeo.removeAttribute('color');
+    }
+    if (curtainGeo.attributes.position) {
+      curtainGeo.removeAttribute('position');
+      curtainGeo.removeAttribute('color');
+      if (curtainGeo.index) curtainGeo.setIndex([]);
+    }
   });
 
   elBtnUpload.addEventListener('click', () => {
@@ -1045,6 +1270,7 @@ function connectWebSocket() {
 
   ws.onopen = () => {
     isConnected = true;
+    console.log('[WS] Connected to ' + WS_URL);
     setConnectionUI(true);
     wsPingSent = performance.now();
   };
@@ -1053,22 +1279,39 @@ function connectWebSocket() {
     const now    = performance.now();
     wsLatencyMs  = Math.round(now - wsPingSent);
     wsPingSent   = now;
-    try { lastTelemetry = JSON.parse(event.data); } catch {}
+    // Log occasionally to prevent spam, but still provide confirmation
+    if (Math.random() < 0.05) {
+      console.log('[WS] Received telemetry frame. Latency: ' + wsLatencyMs + 'ms');
+    }
+    try { 
+      lastTelemetry = JSON.parse(event.data); 
+    } catch(err) {
+      console.error('[WS] JSON parse error: ', err, event.data);
+    }
   };
 
-  ws.onclose = () => {
+  ws.onclose = (event) => {
     isConnected = false;
+    console.log('[WS] Disconnected from ' + WS_URL + ', code: ' + event.code + ', reason: ' + event.reason);
     setConnectionUI(false);
     setTimeout(connectWebSocket, WS_RECONNECT_MS);
   };
 
-  ws.onerror = () => ws.close();
+  ws.onerror = (err) => {
+    console.error('[WS] Error: ', err);
+    ws.close();
+  };
 }
 
 function setConnectionUI(connected) {
   elConnDot.className     = connected ? 'dot dot--connected' : 'dot dot--disconnected';
   elConnLabel.textContent = connected ? 'LIVE TELEMETRY' : 'DISCONNECTED';
   elConnLabel.style.color = connected ? 'var(--color-green)' : '';
+
+  const elWarn = document.getElementById('connection-warning');
+  if (elWarn) {
+    elWarn.style.display = connected ? 'none' : 'flex';
+  }
 }
 
 initSimulationAndRunway();
@@ -1159,6 +1402,10 @@ const el = {
   armPill:      document.getElementById('arm-pill'),
   armLabel:     document.getElementById('arm-label'),
   modeLabel:    document.getElementById('mode-label'),
+  altTrend:     document.getElementById('alt-trend'),
+  uavIcon:      document.getElementById('uav-icon'),
+  uavStateText: document.getElementById('uav-state-text'),
+  uavActionText:document.getElementById('uav-action-text'),
 };
 
 function updateHUD(t) {
@@ -1191,6 +1438,18 @@ function updateHUD(t) {
   el.altMsl.textContent = `${t.position.alt.toFixed(1)} m`;
   el.alt.className      = 'data-value' + (t.position.relative_alt > 80 ? ' text-amber' : '');
 
+  // ── Altitude Trend Arrow ──
+  if (t.vfr.climb > 0.25) {
+    el.altTrend.textContent = '▲';
+    el.altTrend.className = 'trend-indicator trend-up';
+  } else if (t.vfr.climb < -0.25) {
+    el.altTrend.textContent = '▼';
+    el.altTrend.className = 'trend-indicator trend-down';
+  } else {
+    el.altTrend.textContent = '―';
+    el.altTrend.className = 'trend-indicator trend-level';
+  }
+
   el.groundspeed.textContent = `${t.vfr.groundspeed.toFixed(2)} m/s`;
   el.airspeed.textContent    = `${t.vfr.airspeed.toFixed(2)} m/s`;
   el.heading.textContent     = `${t.vfr.heading}°`;
@@ -1198,6 +1457,61 @@ function updateHUD(t) {
   el.climb.className = 'data-value' + (t.vfr.climb > 0.3 ? ' text-green' : t.vfr.climb < -0.3 ? ' text-red' : '');
   el.throttle.textContent      = `${t.vfr.throttle}%`;
   el.throttleFill.style.width  = `${t.vfr.throttle}%`;
+
+  // ── UAV Top Status Widget Updates ──
+  if (el.uavStateText && el.uavActionText && el.uavIcon) {
+    if (!t.status.armed) {
+      el.uavIcon.textContent = '🔒';
+      el.uavStateText.textContent = 'DISARMED';
+      el.uavStateText.className = 'widget-value text-red';
+      el.uavActionText.textContent = 'STANDBY ON GROUND';
+      el.uavActionText.className = 'widget-value text-muted';
+    } else {
+      el.uavStateText.textContent = 'ARMED';
+      el.uavStateText.className = 'widget-value text-green';
+
+      const mode = t.status.mode || 'POSCTL';
+      const climb = t.vfr.climb;
+      let verticalState = 'CRUISING';
+      let verticalColor = 'text-teal';
+
+      if (climb > 0.25) {
+        verticalState = 'CLIMBING';
+        verticalColor = 'text-green';
+      } else if (climb < -0.25) {
+        verticalState = 'DESCENDING';
+        verticalColor = 'text-red';
+      }
+
+      switch (mode) {
+        case 'AUTO_TAKEOFF':
+          el.uavIcon.textContent = '🛫';
+          el.uavActionText.textContent = 'TAKEOFF (CLIMBING)';
+          el.uavActionText.className = 'widget-value text-green';
+          break;
+        case 'AUTO_LAND':
+          el.uavIcon.textContent = '🛬';
+          el.uavActionText.textContent = 'LANDING (DESCENDING)';
+          el.uavActionText.className = 'widget-value text-red';
+          break;
+        case 'AUTO_RTL':
+          el.uavIcon.textContent = '🏠';
+          el.uavActionText.textContent = `RETURNING HOME (RTL) — ${verticalState}`;
+          el.uavActionText.className = `widget-value ${verticalColor}`;
+          break;
+        case 'AUTO_MISSION':
+          el.uavIcon.textContent = '🎯';
+          el.uavActionText.textContent = `MISSION WP ${t.status.active_wp} — ${verticalState}`;
+          el.uavActionText.className = `widget-value ${verticalColor}`;
+          break;
+        default:
+          el.uavIcon.textContent = '🚁';
+          el.uavActionText.textContent = `MANUAL HOVER — ${verticalState}`;
+          el.uavActionText.className = `widget-value ${verticalColor}`;
+          break;
+      }
+    }
+  }
 
   if (t.status.armed) {
     el.armLabel.textContent = 'ARMED';
