@@ -181,6 +181,16 @@ server.listen(CONFIG.ws.port, () => {
 // ─── MAVLink Parser Correct Initialization ─────────────────────────────────
 // corrected arguments: sysid=1, compid=1, version='v1.0', dialects=['common']
 const mav = new MAVLink(1, 1, 'v1.0', ['common']);
+const originalCreateMessage = mav.createMessage;
+mav.createMessage = function(msgid, data, cb) {
+  const prevSysid = this.sysid;
+  const prevCompid = this.compid;
+  this.sysid = 1;
+  this.compid = 1;
+  originalCreateMessage.call(this, msgid, data, cb);
+  this.sysid = prevSysid;
+  this.compid = prevCompid;
+};
 let mavReady = false;
 
 // ─── UDP Socket for QGroundControl MAVLink Link ──────────────────────────────
@@ -442,13 +452,12 @@ let uploadState = {
   items: []
 };
 
-// Send a MISSION_REQUEST_INT back to QGC
+// Send a MISSION_REQUEST back to QGC
 function requestMissionItemFromQGC(seq, targetSys, targetComp) {
-  mav.createMessage('MISSION_REQUEST_INT', {
+  mav.createMessage('MISSION_REQUEST', {
     target_system: targetSys,
     target_component: targetComp,
-    seq: seq,
-    mission_type: 0
+    seq: seq
   }, (reqMsg) => {
     sendToQGC(reqMsg.buffer);
   });
@@ -663,7 +672,7 @@ function setupMAVLinkListeners() {
     });
   });
 
-  function handleMissionItemRequest(fields, targetSys, targetComp, useInt) {
+  function handleMissionItemRequest(fields, targetSys, targetComp) {
     const seq = fields.seq;
     if (seq < 0 || seq >= simState.route.length) {
       console.warn(`[MAV] Requested out of bounds waypoint seq: ${seq}`);
@@ -671,7 +680,6 @@ function setupMAVLinkListeners() {
     }
 
     const wp = simState.route[seq];
-    const msgType = useInt ? 'MISSION_ITEM_INT' : 'MISSION_ITEM';
     const payload = {
       target_system: targetSys,
       target_component: targetComp,
@@ -684,23 +692,18 @@ function setupMAVLinkListeners() {
       param2: 0,
       param3: 0,
       param4: 0,
-      x: useInt ? Math.round(wp.lat * 1e7) : wp.lat,
-      y: useInt ? Math.round(wp.lon * 1e7) : wp.lon,
-      z: wp.alt,
-      mission_type: 0
+      x: wp.lat,
+      y: wp.lon,
+      z: wp.alt
     };
 
-    mav.createMessage(msgType, payload, (itemMsg) => {
+    mav.createMessage('MISSION_ITEM', payload, (itemMsg) => {
       sendToQGC(itemMsg.buffer);
     });
   }
 
-  mav.on('MISSION_REQUEST_INT', (msg, fields) => {
-    handleMissionItemRequest(fields, msg.system, msg.component, true);
-  });
-
   mav.on('MISSION_REQUEST', (msg, fields) => {
-    handleMissionItemRequest(fields, msg.system, msg.component, false);
+    handleMissionItemRequest(fields, msg.system, msg.component);
   });
 
   mav.on('MISSION_CLEAR_ALL', (msg, fields) => {
@@ -738,8 +741,12 @@ mav.on('ready', () => {
   });
 
   udpSocket.on('message', (msg) => {
-    // Feed incoming QGC packets into standard MAVLink parser
+    // Disable system/component filtering during parsing to accept QGC (sysid 255) packets
+    mav.sysid = 0;
+    mav.compid = 0;
     mav.parse(msg);
+    mav.sysid = 1;
+    mav.compid = 1;
   });
 
   udpSocket.bind(CONFIG.udp.localPort, CONFIG.udp.host, () => {
@@ -846,6 +853,16 @@ mav.on('ready', () => {
       });
     }
   }, 100);
+});
+
+mav.on('checksumFail', (msgId, xmlChecksum, calcChecksum, recChecksum) => {
+  console.warn(`[MAV] Checksum Fail: msgId=${msgId} name=${mav.getMessageName(msgId)} XML=${xmlChecksum} Calc=${calcChecksum} Rec=${recChecksum}`);
+});
+
+mav.on('message', (msg) => {
+  if (msg.id !== 0) {
+    console.log(`[MAV] Message received: ID=${msg.id} name=${mav.getMessageName(msg.id)} sys=${msg.system} comp=${msg.component}`);
+  }
 });
 
 mav.on('error', (err) => {
