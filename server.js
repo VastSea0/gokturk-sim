@@ -16,6 +16,10 @@ const http = require('http');
 const dgram = require('dgram');
 const { WebSocketServer } = require('ws');
 const MAVLink = require('mavlink');
+const fs = require('fs');
+const path = require('path');
+
+const MISSION_FILE = path.join(__dirname, 'uploaded_mission.json');
 
 // ─── Configuration ──────────────────────────────────────────────────────────
 const CONFIG = {
@@ -61,6 +65,19 @@ for (let i = 0; i < MOCK_WP_COUNT; i++) {
   });
 }
 
+let initialRoute = defaultMockRoute.slice();
+if (fs.existsSync(MISSION_FILE)) {
+  try {
+    const saved = JSON.parse(fs.readFileSync(MISSION_FILE, 'utf8'));
+    if (Array.isArray(saved) && saved.length > 0) {
+      initialRoute = saved;
+      console.log(`[SIM] Loaded saved mission from ${MISSION_FILE}. Waypoints: ${saved.length}`);
+    }
+  } catch (e) {
+    console.error('[SIM] Failed to parse saved mission file:', e.message);
+  }
+}
+
 // ─── Simulation State ────────────────────────────────────────────────────────
 let simState = {
   armed: false,
@@ -75,7 +92,7 @@ let simState = {
   climb: 0,
   active_wp: 0,
   battery_remaining: 100,
-  route: defaultMockRoute.slice(),
+  route: initialRoute,
   is_taking_off: false,
   takeoff_alt: 10,
   is_landing: false,
@@ -96,7 +113,7 @@ let telemetry = {
   battery:  { voltage: 16.8, current: 0.5, remaining: 100 },
   vfr:      { airspeed: 0, groundspeed: 0, heading: 0, throttle: 0, climb: 0 },
   status:   { armed: false, mode: 'POSCTL', system_status: 3, connected: true, active_wp: 0 },
-  route:    simState.route,
+  route:    initialRoute,
   timestamp: Date.now(),
 };
 
@@ -663,6 +680,13 @@ function setupMAVLinkListeners() {
 
       console.log(`[SIM] New mission upload successful! Total waypoints: ${simState.route.length}`);
 
+      try {
+        fs.writeFileSync(MISSION_FILE, JSON.stringify(simState.route, null, 2), 'utf8');
+        console.log(`[SIM] Saved uploaded mission to file: ${MISSION_FILE}`);
+      } catch (err) {
+        console.error('[SIM] Failed to save mission to file:', err.message);
+      }
+
       mav.createMessage('MISSION_ACK', {
         target_system: targetSys,
         target_component: targetComp,
@@ -742,6 +766,15 @@ function setupMAVLinkListeners() {
     simState.route = [];
     telemetry.route = [];
     simState.active_wp = 0;
+
+    try {
+      if (fs.existsSync(MISSION_FILE)) {
+        fs.unlinkSync(MISSION_FILE);
+        console.log(`[SIM] Deleted saved mission file: ${MISSION_FILE}`);
+      }
+    } catch (err) {
+      console.error('[SIM] Failed to delete saved mission file:', err.message);
+    }
 
     mav.createMessage('MISSION_ACK', {
       target_system: msg.system,

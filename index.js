@@ -1447,15 +1447,17 @@ function updateHUD(t) {
   el.alt.className      = 'data-value' + (t.position.relative_alt > 80 ? ' text-amber' : '');
 
   // ── Altitude Trend Arrow ──
-  if (t.vfr.climb > 0.25) {
-    el.altTrend.textContent = '▲';
-    el.altTrend.className = 'trend-indicator trend-up';
-  } else if (t.vfr.climb < -0.25) {
-    el.altTrend.textContent = '▼';
-    el.altTrend.className = 'trend-indicator trend-down';
-  } else {
-    el.altTrend.textContent = '―';
-    el.altTrend.className = 'trend-indicator trend-level';
+  if (el.altTrend) {
+    if (t.vfr.climb > 0.25) {
+      el.altTrend.textContent = '▲';
+      el.altTrend.className = 'trend-indicator trend-up';
+    } else if (t.vfr.climb < -0.25) {
+      el.altTrend.textContent = '▼';
+      el.altTrend.className = 'trend-indicator trend-down';
+    } else {
+      el.altTrend.textContent = '―';
+      el.altTrend.className = 'trend-indicator trend-level';
+    }
   }
 
   el.groundspeed.textContent = `${t.vfr.groundspeed.toFixed(2)} m/s`;
@@ -1617,8 +1619,13 @@ function animate() {
     // ── Dynamic tile manager: create on first position, update each frame ─
     if (t.position.lat !== 0) {
       if (!tileManager) {
-        homeLat = t.position.lat;
-        homeLon = t.position.lon;
+        if (t.home && t.home.lat) {
+          homeLat = t.home.lat;
+          homeLon = t.home.lon;
+        } else {
+          homeLat = t.position.lat;
+          homeLon = t.position.lon;
+        }
         tileManager = new TileManager(scene, homeLat, homeLon);
         // Apply saved UI settings
         const provEl = document.getElementById('map-provider');
@@ -1707,7 +1714,9 @@ function animate() {
   });
 
   // ── Camera soft-follows drone ─────────────────────────────────────────
-  controls.target.lerp(droneGroup.position, 0.04);
+  if (cameraFollow) {
+    controls.target.lerp(droneGroup.position, 0.04);
+  }
   controls.update();
 
   renderer.render(scene, camera);
