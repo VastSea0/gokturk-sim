@@ -669,6 +669,241 @@ body::after {
   word-break: break-all;
 }
 
+/* ── EO Payload Camera ──────────────────────────────────────────────────── */
+#payload-camera-panel {
+  position: fixed;
+  right: 254px;
+  bottom: 52px;
+  width: 370px;
+  background: rgba(7, 12, 19, 0.92);
+  border: 1px solid rgba(34, 211, 238, 0.22);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45), 0 0 30px rgba(34, 211, 238, 0.06);
+  backdrop-filter: blur(18px);
+  overflow: hidden;
+  z-index: 90;
+  pointer-events: auto;
+}
+
+.payload-camera-header {
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--glass-border);
+}
+
+.payload-camera-header h2 {
+  margin-top: 1px;
+  color: var(--text-primary);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+}
+
+.payload-camera-kicker {
+  display: block;
+  color: var(--color-teal);
+  font-family: var(--font-mono);
+  font-size: 7px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+}
+
+.payload-camera-power {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--color-green);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+}
+
+.payload-camera-power input,
+.payload-toggle input {
+  accent-color: var(--color-teal);
+}
+
+.payload-camera-viewport {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at center, rgba(34, 211, 238, 0.08), transparent 55%),
+    #020508;
+  border-bottom: 1px solid var(--glass-border);
+}
+
+#payload-camera-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.payload-camera-reticle,
+.payload-camera-osd,
+.payload-camera-offline {
+  position: absolute;
+  pointer-events: none;
+}
+
+.payload-camera-reticle {
+  inset: 0;
+}
+
+.reticle-h,
+.reticle-v,
+.reticle-box {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.reticle-h {
+  width: 44px;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: -40px 0 0 rgba(255, 255, 255, 0.35), 40px 0 0 rgba(255, 255, 255, 0.35);
+}
+
+.reticle-v {
+  width: 1px;
+  height: 44px;
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: 0 -40px 0 rgba(255, 255, 255, 0.35), 0 40px 0 rgba(255, 255, 255, 0.35);
+}
+
+.reticle-box {
+  width: 24px;
+  height: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  border-radius: 50%;
+}
+
+.payload-camera-osd {
+  left: 9px;
+  right: 9px;
+  display: flex;
+  justify-content: space-between;
+  color: rgba(255, 255, 255, 0.86);
+  font-family: var(--font-mono);
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-shadow: 0 1px 4px #000;
+}
+
+.payload-camera-osd--top {
+  top: 7px;
+}
+
+.payload-camera-osd--bottom {
+  bottom: 7px;
+}
+
+#payload-camera-rec {
+  color: #f87171;
+}
+
+.payload-camera-offline {
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: rgba(2, 5, 8, 0.88);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+}
+
+.payload-camera-controls {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  padding: 10px 12px 12px;
+}
+
+.payload-control-slider {
+  min-width: 0;
+}
+
+.payload-control-slider input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.08);
+  outline: none;
+}
+
+.payload-control-slider input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--color-teal);
+  cursor: pointer;
+  box-shadow: 0 0 6px rgba(34, 211, 238, 0.55);
+}
+
+.payload-camera-actions {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  align-items: center;
+  gap: 10px;
+}
+
+.payload-toggle,
+.payload-fps-control {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-secondary);
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+}
+
+.payload-fps-control .map-select {
+  min-width: 55px;
+  height: 27px;
+}
+
+.payload-capture-button {
+  height: 27px;
+}
+
+@media (max-width: 1180px) {
+  #payload-camera-panel {
+    right: 12px;
+    bottom: 52px;
+    width: 330px;
+  }
+}
+
+@media (max-height: 720px) {
+  #payload-camera-panel {
+    width: 320px;
+  }
+
+  .payload-camera-controls {
+    padding-top: 8px;
+    padding-bottom: 8px;
+  }
+}
+
 /* ── Runway Controls UI ─────────────────────────────────────────────────── */
 .runway-controls {
   display: flex;

@@ -67,6 +67,32 @@ scene.fog = new THREE.Fog(0xc8dff5, 400, 1800);
 const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 4000);
 camera.position.set(0, CAMERA_DISTANCE * 0.6, CAMERA_DISTANCE);
 
+// ─── EO Payload Camera Renderer ──────────────────────────────────────────────
+
+const payloadCanvas = document.getElementById('payload-camera-canvas');
+const payloadCanvasContext = payloadCanvas.getContext('2d', {
+  alpha: false,
+  willReadFrequently: true,
+});
+const payloadRenderTarget = new THREE.WebGLRenderTarget(
+  payloadCanvas.width,
+  payloadCanvas.height,
+  {
+    minFilter: THREE.LinearFilter,
+    magFilter: THREE.LinearFilter,
+    depthBuffer: true,
+  }
+);
+payloadRenderTarget.texture.colorSpace = THREE.SRGBColorSpace;
+
+const payloadCamera = new THREE.PerspectiveCamera(
+  60,
+  payloadCanvas.width / payloadCanvas.height,
+  0.08,
+  2500
+);
+scene.add(payloadCamera);
+
 // ─── Orbit Controls ───────────────────────────────────────────────────────────
 
 const controls = new OrbitControls(camera, renderer.domElement);
@@ -509,6 +535,263 @@ droneGroup.add(bodyGlow);
 
 droneGroup.scale.setScalar(3.5);
 droneGroup.position.set(0, 10, 0);
+
+// ─── Physical EO Gimbal Payload ──────────────────────────────────────────────
+
+const payloadMountPoint = new THREE.Vector3(0, -0.19, -0.25);
+const payloadGimbalPanGroup = new THREE.Group();
+payloadGimbalPanGroup.position.copy(payloadMountPoint);
+droneGroup.add(payloadGimbalPanGroup);
+
+const payloadGimbalTiltGroup = new THREE.Group();
+payloadGimbalPanGroup.add(payloadGimbalTiltGroup);
+
+const gimbalRingMat = new THREE.MeshStandardMaterial({
+  color: 0x111827,
+  roughness: 0.25,
+  metalness: 0.85,
+});
+const gimbalLensMat = new THREE.MeshStandardMaterial({
+  color: 0x07111d,
+  roughness: 0.05,
+  metalness: 0.95,
+  emissive: new THREE.Color(0x22d3ee),
+  emissiveIntensity: 0.2,
+});
+
+const gimbalYawRing = new THREE.Mesh(
+  new THREE.TorusGeometry(0.08, 0.014, 8, 20),
+  gimbalRingMat
+);
+gimbalYawRing.rotation.x = Math.PI / 2;
+payloadGimbalPanGroup.add(gimbalYawRing);
+
+const gimbalBody = new THREE.Mesh(
+  new THREE.SphereGeometry(0.075, 16, 12),
+  gimbalRingMat
+);
+gimbalBody.castShadow = true;
+payloadGimbalTiltGroup.add(gimbalBody);
+
+const gimbalLens = new THREE.Mesh(
+  new THREE.CylinderGeometry(0.036, 0.042, 0.055, 16),
+  gimbalLensMat
+);
+gimbalLens.rotation.x = Math.PI / 2;
+gimbalLens.position.z = -0.072;
+payloadGimbalTiltGroup.add(gimbalLens);
+
+const gimbalGlass = new THREE.Mesh(
+  new THREE.CircleGeometry(0.031, 18),
+  new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.72 })
+);
+gimbalGlass.position.z = -0.101;
+payloadGimbalTiltGroup.add(gimbalGlass);
+
+// ─── Payload Camera Simulation & Frame API ──────────────────────────────────
+
+class PayloadCameraSystem {
+  constructor(camera3d, sharedRenderer, renderTarget, cameraCanvas, canvasContext) {
+    this.camera = camera3d;
+    this.renderer = sharedRenderer;
+    this.renderTarget = renderTarget;
+    this.canvas = cameraCanvas;
+    this.canvasContext = canvasContext;
+    this.enabled = true;
+    this.stabilized = true;
+    this.panDeg = 0;
+    this.tiltDeg = -35;
+    this.fovDeg = 60;
+    this.fps = 24;
+    this.lastRenderTime = 0;
+    this.frameListeners = new Map();
+    this.processingCanvas = document.createElement('canvas');
+    this.processingCanvas.width = cameraCanvas.width;
+    this.processingCanvas.height = cameraCanvas.height;
+    this.processingContext = this.processingCanvas.getContext('2d', { willReadFrequently: true });
+    this.pixelBuffer = new Uint8Array(cameraCanvas.width * cameraCanvas.height * 4);
+    this.imageData = canvasContext.createImageData(cameraCanvas.width, cameraCanvas.height);
+    this._mountWorldPosition = new THREE.Vector3();
+    this._yawQuaternion = new THREE.Quaternion();
+    this._panQuaternion = new THREE.Quaternion();
+    this._tiltQuaternion = new THREE.Quaternion();
+    this._worldQuaternion = new THREE.Quaternion();
+  }
+
+  setEnabled(enabled) {
+    this.enabled = Boolean(enabled);
+  }
+
+  setPan(degrees) {
+    this.panDeg = THREE.MathUtils.clamp(Number(degrees), -180, 180);
+  }
+
+  setTilt(degrees) {
+    this.tiltDeg = THREE.MathUtils.clamp(Number(degrees), -90, 20);
+  }
+
+  setFov(degrees) {
+    this.fovDeg = THREE.MathUtils.clamp(Number(degrees), 20, 100);
+    this.camera.fov = this.fovDeg;
+    this.camera.updateProjectionMatrix();
+  }
+
+  setFps(fps) {
+    this.fps = THREE.MathUtils.clamp(Number(fps), 1, 60);
+  }
+
+  updatePose() {
+    droneGroup.updateWorldMatrix(true, false);
+    this._mountWorldPosition.copy(payloadMountPoint);
+    droneGroup.localToWorld(this._mountWorldPosition);
+    this.camera.position.copy(this._mountWorldPosition);
+
+    this._panQuaternion.setFromAxisAngle(
+      new THREE.Vector3(0, 1, 0),
+      THREE.MathUtils.degToRad(this.panDeg)
+    );
+    this._tiltQuaternion.setFromAxisAngle(
+      new THREE.Vector3(1, 0, 0),
+      THREE.MathUtils.degToRad(this.tiltDeg)
+    );
+
+    if (this.stabilized) {
+      this._yawQuaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), -smoothYaw);
+      this._worldQuaternion
+        .copy(this._yawQuaternion)
+        .multiply(this._panQuaternion)
+        .multiply(this._tiltQuaternion);
+    } else {
+      this._worldQuaternion
+        .copy(droneGroup.quaternion)
+        .multiply(this._panQuaternion)
+        .multiply(this._tiltQuaternion);
+    }
+
+    this.camera.quaternion.copy(this._worldQuaternion);
+    payloadGimbalPanGroup.rotation.y = THREE.MathUtils.degToRad(this.panDeg);
+    payloadGimbalTiltGroup.rotation.x = THREE.MathUtils.degToRad(this.tiltDeg);
+  }
+
+  render(timeSeconds) {
+    if (!this.enabled || timeSeconds - this.lastRenderTime < 1 / this.fps) return false;
+    this.lastRenderTime = timeSeconds;
+    this.updatePose();
+
+    // The sensor must not render its own carrier or gimbal housing.
+    const droneWasVisible = droneGroup.visible;
+    const shadowAutoUpdate = this.renderer.shadowMap.autoUpdate;
+    try {
+      droneGroup.visible = false;
+      this.renderer.shadowMap.autoUpdate = false;
+      this.renderer.setRenderTarget(this.renderTarget);
+      this.renderer.clear();
+      this.renderer.render(scene, this.camera);
+      this.renderer.readRenderTargetPixels(
+        this.renderTarget,
+        0,
+        0,
+        this.canvas.width,
+        this.canvas.height,
+        this.pixelBuffer
+      );
+      this._copyFlippedPixelsToCanvas();
+    } finally {
+      this.renderer.setRenderTarget(null);
+      this.renderer.shadowMap.autoUpdate = shadowAutoUpdate;
+      droneGroup.visible = droneWasVisible;
+    }
+
+    this._notifyFrameListeners(timeSeconds);
+    return true;
+  }
+
+  captureImageData(width = this.canvas.width, height = this.canvas.height) {
+    this.processingCanvas.width = width;
+    this.processingCanvas.height = height;
+    this.processingContext.drawImage(this.canvas, 0, 0, width, height);
+    return this.processingContext.getImageData(0, 0, width, height);
+  }
+
+  captureBlob(type = 'image/png', quality = 0.92) {
+    return new Promise((resolve, reject) => {
+      this.canvas.toBlob((blob) => {
+        if (blob) resolve(blob);
+        else reject(new Error('Payload camera frame could not be encoded.'));
+      }, type, quality);
+    });
+  }
+
+  onFrame(listener, options = {}) {
+    if (typeof listener !== 'function') {
+      throw new TypeError('Payload camera frame listener must be a function.');
+    }
+    this.frameListeners.set(listener, {
+      fps: THREE.MathUtils.clamp(Number(options.fps || 5), 0.1, this.fps),
+      lastCall: 0,
+    });
+    return () => this.offFrame(listener);
+  }
+
+  offFrame(listener) {
+    this.frameListeners.delete(listener);
+  }
+
+  getState() {
+    return {
+      enabled: this.enabled,
+      stabilized: this.stabilized,
+      panDeg: this.panDeg,
+      tiltDeg: this.tiltDeg,
+      fovDeg: this.fovDeg,
+      fps: this.fps,
+      width: this.canvas.width,
+      height: this.canvas.height,
+    };
+  }
+
+  _notifyFrameListeners(timeSeconds) {
+    for (const [listener, state] of this.frameListeners) {
+      if (timeSeconds - state.lastCall < 1 / state.fps) continue;
+      state.lastCall = timeSeconds;
+      try {
+        listener({
+          timestamp: performance.timeOrigin + performance.now(),
+          canvas: this.canvas,
+          camera: this.camera,
+          state: this.getState(),
+          getImageData: (width, height) => this.captureImageData(width, height),
+        });
+      } catch (error) {
+        console.error('[PAYLOAD CAMERA] Frame listener failed:', error);
+      }
+    }
+  }
+
+  _copyFlippedPixelsToCanvas() {
+    const rowBytes = this.canvas.width * 4;
+    const output = this.imageData.data;
+    for (let sourceY = 0; sourceY < this.canvas.height; sourceY++) {
+      const targetY = this.canvas.height - sourceY - 1;
+      const sourceStart = sourceY * rowBytes;
+      const targetStart = targetY * rowBytes;
+      output.set(
+        this.pixelBuffer.subarray(sourceStart, sourceStart + rowBytes),
+        targetStart
+      );
+    }
+    this.canvasContext.putImageData(this.imageData, 0, 0);
+  }
+}
+
+const payloadCameraSystem = new PayloadCameraSystem(
+  payloadCamera,
+  renderer,
+  payloadRenderTarget,
+  payloadCanvas,
+  payloadCanvasContext
+);
+window.gokturkPayloadCamera = payloadCameraSystem;
 
 // ─── Shadow blob ─────────────────────────────────────────────────────────────
 
@@ -1254,6 +1537,88 @@ function initMapControls() {
   }
 }
 
+function initPayloadCameraControls() {
+  const enabledInput = document.getElementById('payload-camera-enabled');
+  const stabilizedInput = document.getElementById('payload-stabilized');
+  const panInput = document.getElementById('payload-pan');
+  const tiltInput = document.getElementById('payload-tilt');
+  const fovInput = document.getElementById('payload-fov');
+  const fpsInput = document.getElementById('payload-fps');
+  const captureButton = document.getElementById('payload-capture');
+  const stateLabel = document.getElementById('payload-camera-state');
+  const offlineOverlay = document.getElementById('payload-camera-offline');
+  const panValue = document.getElementById('val-payload-pan');
+  const tiltValue = document.getElementById('val-payload-tilt');
+  const fovValue = document.getElementById('val-payload-fov');
+  const angleLabel = document.getElementById('payload-camera-angle-label');
+  const fovLabel = document.getElementById('payload-camera-fov-label');
+  const fpsLabel = document.getElementById('payload-camera-fps-label');
+
+  const updateLabels = () => {
+    const panSign = payloadCameraSystem.panDeg >= 0 ? '+' : '';
+    panValue.textContent = `${payloadCameraSystem.panDeg}°`;
+    tiltValue.textContent = `${payloadCameraSystem.tiltDeg}°`;
+    fovValue.textContent = `${payloadCameraSystem.fovDeg}°`;
+    angleLabel.textContent = `PAN ${panSign}${payloadCameraSystem.panDeg}° / TILT ${payloadCameraSystem.tiltDeg}°`;
+    fovLabel.textContent = `FOV ${payloadCameraSystem.fovDeg}°`;
+    fpsLabel.textContent = `${payloadCameraSystem.fps} FPS`;
+  };
+
+  enabledInput.addEventListener('change', (event) => {
+    payloadCameraSystem.setEnabled(event.target.checked);
+    stateLabel.textContent = event.target.checked ? 'LIVE' : 'OFF';
+    stateLabel.style.color = event.target.checked ? 'var(--color-green)' : 'var(--color-red)';
+    offlineOverlay.style.display = event.target.checked ? 'none' : 'flex';
+  });
+
+  stabilizedInput.addEventListener('change', (event) => {
+    payloadCameraSystem.stabilized = event.target.checked;
+  });
+
+  panInput.addEventListener('input', (event) => {
+    payloadCameraSystem.setPan(event.target.value);
+    updateLabels();
+  });
+
+  tiltInput.addEventListener('input', (event) => {
+    payloadCameraSystem.setTilt(event.target.value);
+    updateLabels();
+  });
+
+  fovInput.addEventListener('input', (event) => {
+    payloadCameraSystem.setFov(event.target.value);
+    updateLabels();
+  });
+
+  fpsInput.addEventListener('change', (event) => {
+    payloadCameraSystem.setFps(event.target.value);
+    updateLabels();
+  });
+
+  captureButton.addEventListener('click', async () => {
+    const originalText = captureButton.textContent;
+    try {
+      const blob = await payloadCameraSystem.captureBlob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `gokturk-eo-${new Date().toISOString().replace(/[:.]/g, '-')}.png`;
+      link.click();
+      URL.revokeObjectURL(url);
+      captureButton.textContent = 'FRAME SAVED';
+    } catch (error) {
+      console.error('[PAYLOAD CAMERA] Capture failed:', error);
+      captureButton.textContent = 'CAPTURE FAILED';
+    } finally {
+      setTimeout(() => {
+        captureButton.textContent = originalText;
+      }, 1400);
+    }
+  });
+
+  updateLabels();
+}
+
 // ─── Smooth State ─────────────────────────────────────────────────────────────
 
 let smoothRoll = 0, smoothPitch = 0, smoothYaw = 0, smoothAlt = 10;
@@ -1324,6 +1689,7 @@ function setConnectionUI(connected) {
 
 initSimulationAndRunway();
 initMapControls();
+initPayloadCameraControls();
 connectWebSocket();
 
 // ─── Attitude Indicator (ADI) ─────────────────────────────────────────────────
@@ -1720,6 +2086,7 @@ function animate() {
   controls.update();
 
   renderer.render(scene, camera);
+  payloadCameraSystem.render(timer.getElapsed());
 }
 
 animate();

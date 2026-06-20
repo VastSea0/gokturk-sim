@@ -12,6 +12,7 @@ Real-time 3D UAV simulation visualizer that streams MAVLink telemetry from a PX4
 
 - **Real-time 3D drone** — procedural quadcopter model with spinning props, LED lights, flight trail
 - **Mission route visualization** — 3D waypoint markers, path lines, and active waypoint glow synced from QGroundControl
+- **EO payload camera simulator** — drone-mounted pan/tilt/FOV gimbal feed with horizon stabilization, PNG capture, and a browser frame API for future computer-vision pipelines
 - **Premium HUD** — glassmorphism panels with attitude indicator (ADI), battery, GPS, VFR data
 - **PX4 flight mode decoding** — custom_mode main/sub byte parsing (MANUAL, POSCTL, AUTO_MISSION, AUTO_RTL, etc.)
 - **MAVLink mission protocol** — downloads mission items from FC and re-syncs when QGC uploads new missions
@@ -111,6 +112,25 @@ Connect QGC to the PX4 SITL via UDP link: `localhost:14550`. Use QGC to:
 | Frontend App | `index.js` | Three.js scene, drone model, route renderer, WS client, HUD |
 | HTML Entry | `index.html` | Canvas + HUD panel layout |
 | Design System | `style.css` | Dark-mode CSS tokens, glassmorphism, animations |
+
+### Payload camera frame API
+
+The simulated EO camera is exposed as `window.gokturkPayloadCamera` for future
+OpenCV.js, TensorFlow.js, ONNX Runtime Web, or WebSocket streaming integrations:
+
+```js
+// Read one RGBA frame.
+const imageData = window.gokturkPayloadCamera.captureImageData(640, 360);
+
+// Subscribe without forcing pixel readback on every rendered frame.
+const unsubscribe = window.gokturkPayloadCamera.onFrame(({ getImageData, state }) => {
+  const frame = getImageData(320, 180);
+  // Run detection/tracking here.
+}, { fps: 5 });
+
+// Save or upload an encoded frame.
+const pngBlob = await window.gokturkPayloadCamera.captureBlob();
+```
 
 ### Telemetry JSON format (WS :8080)
 

@@ -267,6 +267,77 @@
 
     </div><!-- /#hud -->
 
+    <!-- ── EO Payload Camera ──────────────────────────────────────────────── -->
+    <section id="payload-camera-panel" aria-label="Payload camera simulator">
+      <div class="payload-camera-header">
+        <div>
+          <span class="payload-camera-kicker">EO PAYLOAD</span>
+          <h2>GIMBAL CAMERA</h2>
+        </div>
+        <label class="payload-camera-power" title="Enable payload camera">
+          <span id="payload-camera-state">LIVE</span>
+          <input type="checkbox" id="payload-camera-enabled" checked />
+        </label>
+      </div>
+
+      <div class="payload-camera-viewport">
+        <canvas id="payload-camera-canvas" width="640" height="360"></canvas>
+        <div class="payload-camera-reticle" aria-hidden="true">
+          <span class="reticle-h"></span>
+          <span class="reticle-v"></span>
+          <span class="reticle-box"></span>
+        </div>
+        <div class="payload-camera-osd payload-camera-osd--top">
+          <span id="payload-camera-rec">● EO</span>
+          <span id="payload-camera-fps-label">24 FPS</span>
+        </div>
+        <div class="payload-camera-osd payload-camera-osd--bottom">
+          <span id="payload-camera-angle-label">PAN +0° / TILT -35°</span>
+          <span id="payload-camera-fov-label">FOV 60°</span>
+        </div>
+        <div class="payload-camera-offline" id="payload-camera-offline">CAMERA STANDBY</div>
+      </div>
+
+      <div class="payload-camera-controls">
+        <div class="payload-control-slider">
+          <div class="slider-header">
+            <span class="control-label">Pan</span>
+            <span class="slider-value" id="val-payload-pan">0°</span>
+          </div>
+          <input type="range" id="payload-pan" min="-180" max="180" step="1" value="0" />
+        </div>
+        <div class="payload-control-slider">
+          <div class="slider-header">
+            <span class="control-label">Tilt</span>
+            <span class="slider-value" id="val-payload-tilt">-35°</span>
+          </div>
+          <input type="range" id="payload-tilt" min="-90" max="20" step="1" value="-35" />
+        </div>
+        <div class="payload-control-slider">
+          <div class="slider-header">
+            <span class="control-label">Field of view</span>
+            <span class="slider-value" id="val-payload-fov">60°</span>
+          </div>
+          <input type="range" id="payload-fov" min="20" max="100" step="1" value="60" />
+        </div>
+        <div class="payload-camera-actions">
+          <label class="payload-toggle">
+            <input type="checkbox" id="payload-stabilized" checked />
+            <span>STABILIZE</span>
+          </label>
+          <label class="payload-fps-control">
+            <span>FPS</span>
+            <select id="payload-fps" class="map-select">
+              <option value="12">12</option>
+              <option value="24" selected>24</option>
+              <option value="30">30</option>
+            </select>
+          </label>
+          <button id="payload-capture" class="btn-action payload-capture-button">CAPTURE PNG</button>
+        </div>
+      </div>
+    </section>
+
     <!-- ── Connection Warning Banner ── -->
     <div id="connection-warning" style="display: flex;" aria-live="assertive">
       <span class="warning-icon">⚠️</span>
