@@ -83,6 +83,18 @@
         </div>
       </section>
 
+      <!-- ── LEFT: Simulation ────────────────────────────────────────────── -->
+      <section class="hud-panel" id="panel-sim" aria-label="Simulation settings">
+        <h2 class="panel-title">SIMULATION CONTROLS</h2>
+        <div class="sim-buttons">
+          <button id="btn-arm" class="btn-action">ARM VEHICLE</button>
+          <button id="btn-reset" class="btn-action">RESET SIM</button>
+          <button id="btn-upload" class="btn-action btn-glow">LOAD PLAN</button>
+          <input type="file" id="plan-upload-input" accept=".plan,json" style="display:none;" />
+        </div>
+        <div id="plan-info" class="plan-info-text">No custom plan loaded</div>
+      </section>
+
       <!-- ── RIGHT: Position ─────────────────────────────────────────────── -->
       <section class="hud-panel hud-panel--right" id="panel-position" aria-label="Position data">
         <h2 class="panel-title">POSITION</h2>
@@ -134,6 +146,56 @@
             <div class="throttle-fill" id="throttle-fill"></div>
           </div>
           <span class="data-value" id="val-throttle">--%</span>
+        </div>
+      </section>
+
+      <!-- ── RIGHT: Runway ───────────────────────────────────────────────── -->
+      <section class="hud-panel hud-panel--right" id="panel-runway" aria-label="Runway settings">
+        <h2 class="panel-title">RUNWAY (PİST)</h2>
+        <div class="runway-controls">
+          <label class="control-row">
+            <span class="control-label">Show Runway</span>
+            <input type="checkbox" id="runway-show" checked />
+          </label>
+          <label class="control-row">
+            <span class="control-label">Auto-Align (WP1)</span>
+            <input type="checkbox" id="runway-auto-align" checked />
+          </label>
+          <div class="control-slider-group">
+            <div class="slider-header">
+              <span class="control-label">Heading</span>
+              <span class="slider-value" id="val-runway-heading">0°</span>
+            </div>
+            <input type="range" id="runway-heading" min="0" max="359" value="0" disabled />
+          </div>
+          <div class="control-slider-group">
+            <div class="slider-header">
+              <span class="control-label">Length</span>
+              <span class="slider-value" id="val-runway-length">300m</span>
+            </div>
+            <input type="range" id="runway-length" min="100" max="1000" step="50" value="300" />
+          </div>
+          <div class="control-slider-group">
+            <div class="slider-header">
+              <span class="control-label">Width</span>
+              <span class="slider-value" id="val-runway-width">20m</span>
+            </div>
+            <input type="range" id="runway-width" min="5" max="60" step="5" value="20" />
+          </div>
+          <div class="control-slider-group">
+            <div class="slider-header">
+              <span class="control-label">Offset East (X)</span>
+              <span class="slider-value" id="val-runway-offset-x">0m</span>
+            </div>
+            <input type="range" id="runway-offset-x" min="-200" max="200" step="5" value="0" />
+          </div>
+          <div class="control-slider-group">
+            <div class="slider-header">
+              <span class="control-label">Offset South (Z)</span>
+              <span class="slider-value" id="val-runway-offset-z">0m</span>
+            </div>
+            <input type="range" id="runway-offset-z" min="-200" max="200" step="5" value="0" />
+          </div>
         </div>
       </section>
 

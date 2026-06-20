@@ -1,124 +1,170 @@
 /**
- * server.js — Göktürk UAV MAVLink → WebSocket Bridge (PX4 Edition)
+ * server.js — Göktürk UAV MAVLink SITL Autopilot Simulator & WebSocket Bridge
  *
  * Architecture:
- *   [PX4 SITL Docker] --(UDP :14540 MAVLink)--> [This Server] --(WS :8080 JSON)--> [Three.js Frontend]
+ *   [QGroundControl :14550] <--(MAVLink UDP 14540)--> [This Simulator] --(WS :8080 JSON)--> [Three.js Frontend]
  *
- * Usage:
- *   node server.js           → Live mode (expects PX4 SITL on UDP :14540)
- *   node server.js --mock    → Mock mode (generates synthetic telemetry, no Docker needed)
- *
- * MAVLink parsing: Native binary parser (MAVLink v1 + v2 framing) — no npm XML dependency.
- * Message IDs handled:
- *   #0   HEARTBEAT
- *   #30  ATTITUDE
- *   #33  GLOBAL_POSITION_INT
- *   #1   SYS_STATUS
- *   #74  VFR_HUD
+ * This server acts as a native software-in-the-loop (SITL) UAV. It simulates
+ * a virtual drone, updates flight dynamics (Armed, Takeoff, Landing, RTL, Waypoints),
+ * communicates with QGroundControl over MAVLink, and streams telemetry to the web UI.
  */
 
 'use strict';
 
-// ─── PX4 Flight Mode Decoder ─────────────────────────────────────────────────
-// PX4 encodes flight modes as a 32-bit custom_mode field:
-//   Byte layout (little-endian uint32):
-//     bits  0–15: reserved
-//     bits 16–23: main_mode
-//     bits 24–31: sub_mode
-
-const PX4_MAIN_MODES = {
-  1: 'MANUAL',
-  2: 'ALTCTL',
-  3: 'POSCTL',
-  4: 'AUTO',
-  5: 'ACRO',
-  6: 'OFFBOARD',
-  7: 'STABILIZED',
-  8: 'RATTITUDE',
-  10: 'TERMINATION',
-};
-
-const PX4_AUTO_SUB_MODES = {
-  1: 'READY',
-  2: 'TAKEOFF',
-  3: 'LOITER',
-  4: 'MISSION',
-  5: 'RTL',
-  6: 'LAND',
-  7: 'FOLLOW_TARGET',
-  8: 'PRECLAND',
-  9: 'VTOL_TAKEOFF',
-};
-
-/**
- * Decode PX4 custom_mode uint32 into a human-readable mode string.
- * @param {number} customMode - The 32-bit custom_mode field from HEARTBEAT.
- * @returns {string} Human-readable mode name.
- */
-function decodePX4Mode(customMode) {
-  // Extract main_mode (byte 2, bits 16–23) and sub_mode (byte 3, bits 24–31)
-  const mainMode = (customMode >> 16) & 0xFF;
-  const subMode  = (customMode >> 24) & 0xFF;
-
-  const mainName = PX4_MAIN_MODES[mainMode];
-  if (!mainName) return `MODE_${customMode}`;
-
-  // AUTO mode has sub-modes
-  if (mainMode === 4 && subMode > 0) {
-    const subName = PX4_AUTO_SUB_MODES[subMode] || `SUB_${subMode}`;
-    return `AUTO_${subName}`;
-  }
-
-  return mainName;
-}
-
-const dgram   = require('dgram');
+const express = require('express');
+const http = require('http');
+const dgram = require('dgram');
 const { WebSocketServer } = require('ws');
 const MAVLink = require('mavlink');
 
 // ─── Configuration ──────────────────────────────────────────────────────────
-
 const CONFIG = {
   udp: {
-    host: '0.0.0.0',   // Bind to all interfaces so Docker host-port-forward reaches us
-    port: 14540,        // PX4 SITL companion API output port (QGC connects on 14550)
+    host: '0.0.0.0',
+    localPort: 14540,
+    qgcHost: '127.0.0.1',
+    qgcPort: 14550,
   },
   ws: {
     port: 8080,
   },
   telemetry: {
-    broadcastHz: 20,    // How often to push telemetry to frontend clients
-  },
+    rateHz: 20, // rate of physics solver & WS telemetry stream (50ms interval)
+  }
 };
 
-const IS_MOCK = process.argv.includes('--mock');
+// ─── Home Coordinates (Kahramanmaraş Sütçüimam University) ───────────────────
+const HOME_LAT = 37.5748;
+const HOME_LON = 36.9445;
+const HOME_ALT = 584; // elevation in meters
+const MPDL = 111319.5; // meters per degree latitude
+const cosLat = Math.cos(HOME_LAT * Math.PI / 180);
 
-// ─── Shared Telemetry State ───────────────────────────────────────────────────
+// Generate default hexagonal route (used if no mission is uploaded)
+const MOCK_ROUTE_RADIUS = 0.0015; // ~167 m
+const MOCK_WP_COUNT = 6;
+const defaultMockRoute = [];
+for (let i = 0; i < MOCK_WP_COUNT; i++) {
+  const angle = (i / MOCK_WP_COUNT) * Math.PI * 2;
+  defaultMockRoute.push({
+    seq: i,
+    lat: HOME_LAT + MOCK_ROUTE_RADIUS * Math.sin(angle),
+    lon: HOME_LON + MOCK_ROUTE_RADIUS * Math.cos(angle),
+    alt: 50 + (i % 3) * 10,
+  });
+}
+
+// ─── Simulation State ────────────────────────────────────────────────────────
+let simState = {
+  armed: false,
+  flightMode: 'POSCTL', // PX4 custom modes: POSCTL, AUTO_TAKEOFF, AUTO_MISSION, AUTO_LAND, AUTO_RTL
+  lat: HOME_LAT,
+  lon: HOME_LON,
+  alt: 0, // AGL relative altitude (meters)
+  yaw: 0, // heading in radians
+  roll: 0,
+  pitch: 0,
+  speed: 0,
+  climb: 0,
+  active_wp: 0,
+  battery_remaining: 100,
+  route: defaultMockRoute.slice(),
+  is_taking_off: false,
+  takeoff_alt: 10,
+  is_landing: false,
+  is_rtl: false,
+  time_boot_ms: 0
+};
+
+// Target coordinates for mission/RTL
+let target_lat = HOME_LAT;
+let target_lon = HOME_LON;
+let target_alt = 0;
+
+// Telemetry structure shared with Frontend
 let telemetry = {
   attitude: { roll: 0, pitch: 0, yaw: 0, rollspeed: 0, pitchspeed: 0, yawspeed: 0 },
-  position: { lat: 0, lon: 0, alt: 0, relative_alt: 0, vx: 0, vy: 0, vz: 0 },
-  battery:  { voltage: 0, current: 0, remaining: -1 },
+  position: { lat: HOME_LAT, lon: HOME_LON, alt: HOME_ALT, relative_alt: 0, vx: 0, vy: 0, vz: 0 },
+  battery:  { voltage: 16.8, current: 0.5, remaining: 100 },
   vfr:      { airspeed: 0, groundspeed: 0, heading: 0, throttle: 0, climb: 0 },
-  status:   { armed: false, mode: 'UNKNOWN', system_status: 0, connected: false, active_wp: -1 },
-  route:    [],          // Array of { seq, lat, lon, alt } waypoints from mission
+  status:   { armed: false, mode: 'POSCTL', system_status: 3, connected: true, active_wp: 0 },
+  route:    simState.route,
   timestamp: Date.now(),
 };
 
-// Map base_mode bitmask to arm state (same for ArduPilot & PX4)
-function isArmed(base_mode) {
-  return (base_mode & 128) !== 0; // MAV_MODE_FLAG_SAFETY_ARMED = 128
-}
+// ─── Express & HTTP & WebSocket Server ──────────────────────────────────────
+const app = express();
+app.get('/health', (req, res) => res.json({ status: 'running', armed: simState.armed, mode: simState.flightMode }));
 
-// ─── WebSocket Server ─────────────────────────────────────────────────────────
-const wss = new WebSocketServer({ port: CONFIG.ws.port });
+const server = http.createServer(app);
+const wss = new WebSocketServer({ server });
+
 let connectedClients = 0;
 
 wss.on('connection', (ws) => {
   connectedClients++;
   console.log(`[WS] Client connected (total: ${connectedClients})`);
   ws.send(JSON.stringify(telemetry));
-  ws.on('close',  () => { connectedClients--; console.log(`[WS] Client disconnected (total: ${connectedClients})`); });
-  ws.on('error',  (e) => console.error('[WS] Client error:', e.message));
+
+  ws.on('message', (messageData) => {
+    try {
+      const data = JSON.parse(messageData);
+      console.log(`[WS] Command from UI:`, data.type);
+      
+      switch (data.type) {
+        case 'arm':
+          simState.armed = !!data.value;
+          if (simState.armed) {
+            simState.battery_remaining = 100;
+            if (simState.alt < 0.5) {
+              // Trigger auto takeoff if arming on ground
+              simState.is_taking_off = true;
+              simState.takeoff_alt = 10;
+              simState.flightMode = 'AUTO_TAKEOFF';
+            }
+          } else {
+            simState.flightMode = 'POSCTL';
+          }
+          break;
+        case 'reset':
+          simState.armed = false;
+          simState.lat = simState.route.length > 0 ? simState.route[0].lat : HOME_LAT;
+          simState.lon = simState.route.length > 0 ? simState.route[0].lon : HOME_LON;
+          simState.alt = 0;
+          simState.yaw = 0;
+          simState.roll = 0;
+          simState.pitch = 0;
+          simState.speed = 0;
+          simState.climb = 0;
+          simState.active_wp = 0;
+          simState.battery_remaining = 100;
+          simState.is_taking_off = false;
+          simState.is_landing = false;
+          simState.is_rtl = false;
+          simState.flightMode = 'POSCTL';
+          break;
+        case 'set_route':
+          if (Array.isArray(data.route)) {
+            simState.route = data.route;
+            simState.active_wp = 0;
+            console.log(`[WS] Route updated via UI. Waypoints: ${data.route.length}`);
+            if (data.route.length > 0) {
+              simState.lat = data.route[0].lat;
+              simState.lon = data.route[0].lon;
+              simState.alt = 0;
+            }
+            telemetry.route = simState.route;
+          }
+          break;
+      }
+      broadcastTelemetry();
+    } catch (e) {
+      console.error('[WS] Failed to parse message from client:', e.message);
+    }
+  });
+
+  ws.on('close', () => { connectedClients--; console.log(`[WS] Client disconnected (total: ${connectedClients})`); });
+  ws.on('error', (e) => console.error('[WS] Client error:', e.message));
 });
 
 function broadcastTelemetry() {
@@ -128,671 +174,688 @@ function broadcastTelemetry() {
   wss.clients.forEach((c) => { if (c.readyState === c.OPEN) c.send(payload); });
 }
 
-setInterval(broadcastTelemetry, Math.round(1000 / CONFIG.broadcastHz));
-console.log(`[WS] WebSocket server listening on ws://localhost:${CONFIG.ws.port}`);
+server.listen(CONFIG.ws.port, () => {
+  console.log(`[HTTP/WS] Express & WebSocket listening on port ${CONFIG.ws.port}`);
+});
 
-// ─── MAVLink Binary Parser ─────────────────────────────────────────────────────
-/**
- * Lightweight stateful MAVLink v1 + v2 frame parser.
- * Calls onMessage(msgId, payload) for each validated frame.
- *
- * MAVLink v1 frame:  0xFE | LEN | SEQ | SYS | COMP | MSGID(1) | PAYLOAD(LEN) | CRC(2)
- * MAVLink v2 frame:  0xFD | LEN | INCOMP | COMP_FLAGS | SEQ | SYS | COMP | MSGID(3) | PAYLOAD(LEN) | CRC(2) [+SIG(13)]
- */
-class MAVLinkParser {
-  constructor(onMessage) {
-    this._onMessage = onMessage;
-    this._buf = Buffer.alloc(512);
-    this._pos = 0;
-    this._state = 'IDLE';
-    this._expected = 0; // total expected frame bytes after magic byte
-    this._isV2 = false;
+// ─── MAVLink Parser Correct Initialization ─────────────────────────────────
+// corrected arguments: sysid=1, compid=1, version='v1.0', dialects=['common']
+const mav = new MAVLink(1, 1, 'v1.0', ['common']);
+let mavReady = false;
+
+// ─── UDP Socket for QGroundControl MAVLink Link ──────────────────────────────
+const udpSocket = dgram.createSocket('udp4');
+
+function sendToQGC(msgBuffer) {
+  udpSocket.send(msgBuffer, 0, msgBuffer.length, CONFIG.udp.qgcPort, CONFIG.udp.qgcHost, (err) => {
+    if (err) console.error('[UDP] Error sending MAVLink packet:', err);
+  });
+}
+
+// ─── QGC Custom Modes & Handshakes ──────────────────────────────────────────
+function getHeartbeatModes() {
+  let customMode = 0;
+  let baseMode = 81; // MAV_MODE_FLAG_CUSTOM_MODE_ENABLED = 1, MAV_MODE_FLAG_STABILIZE_ENABLED = 16, MAV_MODE_FLAG_MANUAL_INPUT_ENABLED = 64
+  
+  if (simState.armed) {
+    baseMode += 128; // MAV_MODE_FLAG_SAFETY_ARMED = 128
   }
+  
+  switch (simState.flightMode) {
+    case 'POSCTL':
+      customMode = (3 << 16); // Main mode 3 (POSCTL)
+      break;
+    case 'AUTO_TAKEOFF':
+      customMode = (4 << 16) | (2 << 24); // Main mode 4 (AUTO), Sub mode 2 (TAKEOFF)
+      break;
+    case 'AUTO_MISSION':
+      customMode = (4 << 16) | (4 << 24); // Main mode 4 (AUTO), Sub mode 4 (MISSION)
+      break;
+    case 'AUTO_LAND':
+      customMode = (4 << 16) | (6 << 24); // Main mode 4 (AUTO), Sub mode 6 (LAND)
+      break;
+    case 'AUTO_RTL':
+      customMode = (4 << 16) | (5 << 24); // Main mode 4 (AUTO), Sub mode 5 (RTL)
+      break;
+  }
+  return { customMode, baseMode };
+}
 
-  feed(data) {
-    for (let i = 0; i < data.length; i++) {
-      const b = data[i];
+// ─── Flight Physics Simulation Loop (Runs at 20 Hz) ─────────────────────────
+const dt = 1 / CONFIG.telemetry.rateHz; // 0.05 seconds
 
-      if (this._state === 'IDLE') {
-        if (b === 0xFE) {          // MAVLink v1 magic
-          this._isV2 = false;
-          this._buf[0] = b;
-          this._pos = 1;
-          this._state = 'ACCUMULATE';
-          this._expected = null;  // learn from byte 1
-        } else if (b === 0xFD) {  // MAVLink v2 magic
-          this._isV2 = true;
-          this._buf[0] = b;
-          this._pos = 1;
-          this._state = 'ACCUMULATE';
-          this._expected = null;
-        }
-        continue;
-      }
+function updatePhysics() {
+  simState.time_boot_ms += Math.round(dt * 1000);
 
-      if (this._state === 'ACCUMULATE') {
-        this._buf[this._pos] = b;
-        this._pos++;
-
-        // Learn total frame length once we have the payload-length byte
-        if (this._pos === 2 && this._expected === null) {
-          const payloadLen = b; // byte 1 = LEN
-          if (this._isV2) {
-            // v2 header = 10 bytes, crc = 2, optional sig = 0 (we won't validate)
-            this._expected = 1 + 1 + 4 + 1 + 1 + 3 + payloadLen + 2; // total after magic
-          } else {
-            // v1 header = 6 bytes, crc = 2
-            this._expected = 1 + 1 + 1 + 1 + 1 + payloadLen + 2; // total after magic
-          }
-        }
-
-        // When we've accumulated the full frame:
-        if (this._expected !== null && this._pos >= this._expected + 1) {
-          this._processFrame();
-          this._state = 'IDLE';
-          this._pos = 0;
-          this._expected = null;
-        }
-      }
+  if (!simState.armed) {
+    // Settle / descend on ground if disarmed
+    simState.roll *= 0.8;
+    simState.pitch *= 0.8;
+    simState.speed = 0;
+    simState.climb = 0;
+    if (simState.alt > 0) {
+      simState.alt = Math.max(0, simState.alt - 3.0 * dt);
     }
+    return;
   }
 
-  _processFrame() {
-    const buf = this._buf;
+  // Armed state transitions
+  if (simState.is_taking_off) {
+    simState.flightMode = 'AUTO_TAKEOFF';
+    const dAlt = simState.takeoff_alt - simState.alt;
+    simState.roll *= 0.8;
+    simState.pitch *= 0.8;
+    simState.speed = 0;
 
-    if (this._isV2) {
-      // v2: magic(1) len(1) incompat(1) compat(1) seq(1) sysid(1) compid(1) msgid(3) payload(len) crc(2)
-      const payloadLen = buf[1];
-      const msgId      = buf[7] | (buf[8] << 8) | (buf[9] << 16);
-      const payload    = Buffer.from(buf.subarray(10, 10 + payloadLen));
-      this._onMessage(msgId, payload);
+    if (dAlt > 0.1) {
+      simState.climb = 2.0; // 2 m/s ascent
+      simState.alt += simState.climb * dt;
     } else {
-      // v1: magic(1) len(1) seq(1) sysid(1) compid(1) msgid(1) payload(len) crc(2)
-      const payloadLen = buf[1];
-      const msgId      = buf[5];
-      const payload    = Buffer.from(buf.subarray(6, 6 + payloadLen));
-      this._onMessage(msgId, payload);
+      simState.alt = simState.takeoff_alt;
+      simState.climb = 0;
+      simState.is_taking_off = false;
+      console.log('[SIM] Takeoff target reached. Transitioning to POSCTL/MISSION.');
+      simState.flightMode = simState.route.length > 0 ? 'AUTO_MISSION' : 'POSCTL';
     }
+  } 
+  else if (simState.is_landing) {
+    simState.flightMode = 'AUTO_LAND';
+    simState.roll *= 0.8;
+    simState.pitch *= 0.8;
+    simState.speed = 0;
+
+    if (simState.alt > 0.1) {
+      simState.climb = -1.5; // -1.5 m/s descent
+      simState.alt += simState.climb * dt;
+    } else {
+      simState.alt = 0;
+      simState.climb = 0;
+      simState.armed = false;
+      simState.is_landing = false;
+      simState.flightMode = 'POSCTL';
+      console.log('[SIM] Land completed. Disarmed.');
+    }
+  } 
+  else if (simState.is_rtl) {
+    simState.flightMode = 'AUTO_RTL';
+    const dLat = HOME_LAT - simState.lat;
+    const dLon = HOME_LON - simState.lon;
+    const dx = dLat * MPDL;
+    const dy = dLon * MPDL * cosLat;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+
+    // Maintain a safe RTL altitude (e.g. 20 meters AGL or current, whichever is higher)
+    const rtlAlt = Math.max(20, simState.alt);
+    const dAlt = rtlAlt - simState.alt;
+    if (Math.abs(dAlt) > 0.5) {
+      simState.climb = Math.sign(dAlt) * 2.0;
+      simState.alt += simState.climb * dt;
+    } else {
+      simState.climb = 0;
+    }
+
+    if (dist > 2) {
+      const target_yaw = Math.atan2(dy, dx);
+      let yaw_diff = target_yaw - simState.yaw;
+      while (yaw_diff > Math.PI) yaw_diff -= Math.PI * 2;
+      while (yaw_diff < -Math.PI) yaw_diff += Math.PI * 2;
+
+      const max_turn = 2.0 * dt;
+      const turn = Math.min(Math.max(yaw_diff, -max_turn), max_turn);
+      simState.yaw += turn;
+
+      simState.speed = Math.min(10, dist * 0.5);
+      simState.pitch = -0.15 * (simState.speed / 10);
+      simState.roll = -0.3 * (turn / max_turn);
+
+      const vx = simState.speed * Math.cos(simState.yaw);
+      const vy = simState.speed * Math.sin(simState.yaw);
+      simState.lat += (vx * dt) / MPDL;
+      simState.lon += (vy * dt) / (MPDL * cosLat);
+    } else {
+      simState.is_rtl = false;
+      simState.is_landing = true;
+      console.log('[SIM] RTL reached home point. Landing.');
+    }
+  } 
+  else if (simState.route.length > 0) {
+    // AUTO MISSION Mode
+    simState.flightMode = 'AUTO_MISSION';
+    const wp = simState.route[simState.active_wp];
+
+    const dLat = wp.lat - simState.lat;
+    const dLon = wp.lon - simState.lon;
+    const dx = dLat * MPDL;
+    const dy = dLon * MPDL * cosLat;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    const dAlt = wp.alt - simState.alt;
+
+    // Adjust altitude
+    if (Math.abs(dAlt) > 0.5) {
+      simState.climb = Math.sign(dAlt) * Math.min(2.0, Math.abs(dAlt));
+      simState.alt += simState.climb * dt;
+    } else {
+      simState.climb = 0;
+    }
+
+    if (dist > 4.0) {
+      // Heading control towards waypoint
+      const target_yaw = Math.atan2(dy, dx);
+      let yaw_diff = target_yaw - simState.yaw;
+      while (yaw_diff > Math.PI) yaw_diff -= Math.PI * 2;
+      while (yaw_diff < -Math.PI) yaw_diff += Math.PI * 2;
+
+      const max_turn = 2.0 * dt;
+      const turn = Math.min(Math.max(yaw_diff, -max_turn), max_turn);
+      simState.yaw += turn;
+
+      simState.speed = Math.min(12, dist * 0.4);
+      simState.pitch = -0.15 * (simState.speed / 12);
+      simState.roll = -0.3 * (turn / max_turn);
+
+      const vx = simState.speed * Math.cos(simState.yaw);
+      const vy = simState.speed * Math.sin(simState.yaw);
+      simState.lat += (vx * dt) / MPDL;
+      simState.lon += (vy * dt) / (MPDL * cosLat);
+    } else {
+      // Waypoint Reached
+      console.log(`[SIM] Reached waypoint ${simState.active_wp}`);
+      
+      // Send MISSION_ITEM_REACHED to QGC
+      mav.createMessage('MISSION_ITEM_REACHED', {
+        seq: simState.active_wp
+      }, (reachedMsg) => {
+        sendToQGC(reachedMsg.buffer);
+      });
+
+      // Next waypoint
+      simState.active_wp = (simState.active_wp + 1) % simState.route.length;
+      if (simState.active_wp === 0) {
+        console.log('[SIM] Mission complete! Activating RTL.');
+        simState.is_rtl = true;
+      }
+    }
+  } 
+  else {
+    // Hover Mode (POSCTL)
+    simState.flightMode = 'POSCTL';
+    simState.speed *= 0.8;
+    simState.roll *= 0.8;
+    simState.pitch *= 0.8;
+    simState.climb = 0;
   }
+
+  // Drain Battery
+  simState.battery_remaining = Math.max(5, simState.battery_remaining - 0.01 * dt);
 }
 
-// ─── Message Decoders ─────────────────────────────────────────────────────────
-// Each function reads the raw payload Buffer and returns the fields we care about.
-// Field byte offsets match MAVLink XML definitions (fields sorted by type size, large first).
-
-/** HEARTBEAT (#0) — 9 bytes
- *  uint32 custom_mode | uint8 type | uint8 autopilot | uint8 base_mode | uint8 system_status | uint8 mavlink_version
- */
-function decodeHeartbeat(p) {
-  if (p.length < 9) return null;
-  return {
-    custom_mode:    p.readUInt32LE(0),
-    type:           p[4],
-    autopilot:      p[5],
-    base_mode:      p[6],
-    system_status:  p[7],
+// ─── Synchronize state to Telemetry JSON ─────────────────────────────────────
+function updateTelemetryObject() {
+  telemetry = {
+    attitude: {
+      roll: simState.roll,
+      pitch: simState.pitch,
+      yaw: simState.yaw,
+      rollspeed: 0,
+      pitchspeed: 0,
+      yawspeed: 0,
+    },
+    position: {
+      lat: simState.lat,
+      lon: simState.lon,
+      alt: simState.alt + HOME_ALT,
+      relative_alt: simState.alt,
+      vx: simState.speed * Math.cos(simState.yaw) * 100,
+      vy: simState.speed * Math.sin(simState.yaw) * 100,
+      vz: -simState.climb * 100,
+    },
+    battery: {
+      voltage: (simState.armed ? 15.2 : 16.8) * (simState.battery_remaining / 100),
+      current: simState.armed ? (12.0 + Math.abs(simState.climb) * 4.0) : 0.5,
+      remaining: Math.round(simState.battery_remaining),
+    },
+    vfr: {
+      airspeed: simState.speed,
+      groundspeed: simState.speed,
+      heading: Math.round((simState.yaw * 180 / Math.PI + 360) % 360),
+      throttle: simState.armed ? Math.round(40 + (simState.climb * 10) + simState.speed * 2) : 0,
+      climb: simState.climb,
+    },
+    status: {
+      armed:         simState.armed,
+      mode:          simState.flightMode,
+      system_status: simState.armed ? 4 : 3,
+      connected:     true,
+      active_wp:     simState.active_wp,
+    },
+    route: simState.route,
+    timestamp: Date.now(),
   };
 }
 
-/** SYS_STATUS (#1) — 31 bytes (only need fields at specific offsets)
- *  uint32 sensors_present(×3) ... uint16 voltage_battery | int16 current_battery ... int8 battery_remaining
- *  Sorted fields (by type size): 3×uint32(0–11), 3×uint16(12–17), then ints, then uint8s.
- *  voltage_battery at offset 12, current_battery at offset 14, battery_remaining at offset 30.
- */
-function decodeSysStatus(p) {
-  if (p.length < 31) return null;
-  return {
-    voltage_battery:  p.readUInt16LE(12),   // mV
-    current_battery:  p.readInt16LE(14),    // cA (-1 = unknown)
-    battery_remaining:p.readInt8(30),       // % (-1 = unknown)
-  };
+// ─── Handlers for incoming MAVLink packets from QGC ─────────────────────────
+
+let uploadState = {
+  active: false,
+  expectedCount: 0,
+  receivedCount: 0,
+  items: []
+};
+
+// Send a MISSION_REQUEST_INT back to QGC
+function requestMissionItemFromQGC(seq, targetSys, targetComp) {
+  mav.createMessage('MISSION_REQUEST_INT', {
+    target_system: targetSys,
+    target_component: targetComp,
+    seq: seq,
+    mission_type: 0
+  }, (reqMsg) => {
+    sendToQGC(reqMsg.buffer);
+  });
 }
 
-/** ATTITUDE (#30) — 28 bytes
- *  uint32 time_boot_ms | float roll | float pitch | float yaw | float rollspeed | float pitchspeed | float yawspeed
- */
-function decodeAttitude(p) {
-  if (p.length < 28) return null;
-  return {
-    roll:       p.readFloatLE(4),
-    pitch:      p.readFloatLE(8),
-    yaw:        p.readFloatLE(12),
-    rollspeed:  p.readFloatLE(16),
-    pitchspeed: p.readFloatLE(20),
-    yawspeed:   p.readFloatLE(24),
-  };
-}
+function setupMAVLinkListeners() {
+  // ── 1. COMMAND_LONG (Arm, Takeoff, Land, RTL, Request Message)
+  mav.on('COMMAND_LONG', (msg, fields) => {
+    console.log(`[MAV] COMMAND_LONG: cmd=${fields.command} param1=${fields.param1}`);
+    let result = 0; // MAV_RESULT_ACCEPTED
 
-/** GLOBAL_POSITION_INT (#33) — 28 bytes
- *  uint32 time_boot_ms | int32 lat | int32 lon | int32 alt | int32 relative_alt | int16 vx | int16 vy | int16 vz | uint16 hdg
- */
-function decodeGlobalPositionInt(p) {
-  if (p.length < 28) return null;
-  return {
-    lat:          p.readInt32LE(4),
-    lon:          p.readInt32LE(8),
-    alt:          p.readInt32LE(12),
-    relative_alt: p.readInt32LE(16),
-    vx:           p.readInt16LE(20),
-    vy:           p.readInt16LE(22),
-    vz:           p.readInt16LE(24),
-  };
-}
-
-/** VFR_HUD (#74) — 20 bytes
- *  float airspeed | float groundspeed | float alt | float climb | int16 heading | uint16 throttle
- */
-function decodeVfrHud(p) {
-  if (p.length < 20) return null;
-  return {
-    airspeed:    p.readFloatLE(0),
-    groundspeed: p.readFloatLE(4),
-    alt:         p.readFloatLE(8),
-    climb:       p.readFloatLE(12),
-    heading:     p.readInt16LE(16),
-    throttle:    p.readUInt16LE(18),
-  };
-}
-
-// ─── Live MAVLink Mode ────────────────────────────────────────────────────────
-if (!IS_MOCK) {
-  const parser = new MAVLinkParser((msgId, payload) => {
-    switch (msgId) {
-      case 0: { // HEARTBEAT
-        const f = decodeHeartbeat(payload);
-        if (!f) break;
-        const armed = isArmed(f.base_mode);
-        const mode  = ARDUCOPTER_MODES[f.custom_mode] || `MODE_${f.custom_mode}`;
-        if (armed !== telemetry.status.armed || mode !== telemetry.status.mode) {
-          console.log(`[MAV] State: ${armed ? 'ARMED' : 'DISARMED'} | Mode: ${mode}`);
+    switch (fields.command) {
+      case 400: // MAV_CMD_COMPONENT_ARM_DISARM
+        const arm = fields.param1 === 1;
+        simState.armed = arm;
+        if (arm) {
+          simState.battery_remaining = 100;
+          if (simState.alt < 0.5) {
+            simState.is_taking_off = true;
+            simState.takeoff_alt = 10;
+            simState.flightMode = 'AUTO_TAKEOFF';
+          }
+        } else {
+          simState.flightMode = 'POSCTL';
         }
-        telemetry.status.armed         = armed;
-        telemetry.status.mode          = mode;
-        telemetry.status.system_status = f.system_status;
-        telemetry.status.connected     = true;
-        lastHeartbeat                  = Date.now();
+        console.log(`[SIM] Arm set to: ${simState.armed}`);
         break;
-      }
-      case 30: { // ATTITUDE
-        const f = decodeAttitude(payload);
-        if (!f) break;
-        telemetry.attitude = f;
+
+      case 22: // MAV_CMD_NAV_TAKEOFF
+        simState.takeoff_alt = fields.param7 || 10;
+        simState.is_taking_off = true;
+        simState.flightMode = 'AUTO_TAKEOFF';
+        console.log(`[SIM] Takeoff initiated to ${simState.takeoff_alt}m`);
         break;
-      }
-      case 33: { // GLOBAL_POSITION_INT
-        const f = decodeGlobalPositionInt(payload);
-        if (!f) break;
-        telemetry.position = {
-          lat:          f.lat          / 1e7,
-          lon:          f.lon          / 1e7,
-          alt:          f.alt          / 1000,
-          relative_alt: f.relative_alt / 1000,
-          vx: f.vx, vy: f.vy, vz: f.vz,
-        };
+
+      case 21: // MAV_CMD_NAV_LAND
+        simState.is_landing = true;
+        simState.flightMode = 'AUTO_LAND';
+        console.log(`[SIM] Land initiated`);
         break;
-      }
-      case 1: { // SYS_STATUS
-        const f = decodeSysStatus(payload);
-        if (!f) break;
-        telemetry.battery = {
-          voltage:   f.voltage_battery  / 1000,
-          current:   f.current_battery  / 100,
-          remaining: f.battery_remaining,
-        };
+
+      case 20: // MAV_CMD_NAV_RETURN_TO_LAUNCH
+        simState.is_rtl = true;
+        simState.flightMode = 'AUTO_RTL';
+        console.log(`[SIM] RTL initiated`);
         break;
-      }
-      case 74: { // VFR_HUD
-        const f = decodeVfrHud(payload);
-        if (!f) break;
-        telemetry.vfr = {
-          airspeed:    f.airspeed,
-          groundspeed: f.groundspeed,
-          heading:     f.heading,
-          throttle:    f.throttle,
-          climb:       f.climb,
-        };
+
+      case 176: // MAV_CMD_DO_SET_MODE
+        // Set Mode
+        const mode = fields.param2;
+        console.log(`[MAV] DO_SET_MODE main_mode: ${mode}`);
         break;
-      }
+
+      case 512: // MAV_CMD_REQUEST_MESSAGE
+        const reqMessageId = Math.round(fields.param1);
+        if (reqMessageId === 148) { // AUTOPILOT_VERSION
+          mav.createMessage('AUTOPILOT_VERSION', {
+            capabilities: 0,
+            flight_sw_version: 1,
+            middleware_sw_version: 1,
+            os_sw_version: 1,
+            board_version: 1,
+            flight_custom_version: [0, 0, 0, 0, 0, 0, 0, 0],
+            middleware_custom_version: [0, 0, 0, 0, 0, 0, 0, 0],
+            os_custom_version: [0, 0, 0, 0, 0, 0, 0, 0],
+            vendor_id: 0,
+            product_id: 0,
+            uid: 0
+          }, (versionMsg) => {
+            sendToQGC(versionMsg.buffer);
+          });
+        }
+        break;
+    }
+
+    // Acknowledge command immediately
+    mav.createMessage('COMMAND_ACK', {
+      command: fields.command,
+      result: result,
+      progress: 0,
+      result_param2: 0,
+      target_system: msg.system,
+      target_component: msg.component
+    }, (ackMsg) => {
+      sendToQGC(ackMsg.buffer);
+    });
+  });
+
+  // ── 2. Parameter Protocol
+  mav.on('PARAM_REQUEST_LIST', (msg, fields) => {
+    console.log('[MAV] QGC requested param list');
+    // Send a single default parameter value to satisfy QGC
+    mav.createMessage('PARAM_VALUE', {
+      param_id: 'SYS_AUTOSTART',
+      param_value: 1,
+      param_type: 6, // INT32
+      param_count: 1,
+      param_index: 0
+    }, (paramMsg) => {
+      sendToQGC(paramMsg.buffer);
+    });
+  });
+
+  mav.on('PARAM_REQUEST_READ', (msg, fields) => {
+    const paramId = fields.param_id.trim();
+    console.log(`[MAV] Param read: ${paramId}`);
+    mav.createMessage('PARAM_VALUE', {
+      param_id: paramId,
+      param_value: paramId === 'SYS_AUTOSTART' ? 1 : 0,
+      param_type: 6,
+      param_count: 1,
+      param_index: 0
+    }, (paramMsg) => {
+      sendToQGC(paramMsg.buffer);
+    });
+  });
+
+  // ── 3. Mission Upload Protocol (QGC -> Drone)
+  mav.on('MISSION_COUNT', (msg, fields) => {
+    console.log(`[MAV] MISSION_COUNT: expected waypoints=${fields.count}`);
+    uploadState.expectedCount = fields.count;
+    uploadState.receivedCount = 0;
+    uploadState.items = [];
+    uploadState.active = true;
+
+    if (fields.count > 0) {
+      requestMissionItemFromQGC(0, msg.system, msg.component);
+    } else {
+      simState.route = [];
+      telemetry.route = [];
+      uploadState.active = false;
+      mav.createMessage('MISSION_ACK', {
+        target_system: msg.system,
+        target_component: msg.component,
+        type: 0, // ACCEPTED
+        mission_type: 0
+      }, (ackMsg) => {
+        sendToQGC(ackMsg.buffer);
+      });
+      broadcastTelemetry();
     }
   });
 
-  // Heartbeat watchdog
-  let lastHeartbeat = Date.now();
-  setInterval(() => {
-    if (Date.now() - lastHeartbeat > 5000 && telemetry.status.connected) {
-      console.warn('[MAV] No heartbeat for 5s — marking disconnected');
-      telemetry.status.connected = false;
-      telemetry.status.armed     = false;
-    }
-  }, 2000);
+  function processMissionItem(fields, targetSys, targetComp) {
+    if (!uploadState.active) return;
 
-  // UDP socket
-  const udpSocket = dgram.createSocket('udp4');
+    const lat = fields.x > 180 || fields.x < -180 ? fields.x / 1e7 : fields.x;
+    const lon = fields.y > 180 || fields.y < -180 ? fields.y / 1e7 : fields.y;
+    const alt = fields.z;
 
-  udpSocket.on('error', (err) => {
-    console.error('[UDP] Socket error:', err.message);
-    udpSocket.close();
-  });
-
-  udpSocket.on('message', (data, rinfo) => {
-    parser.feed(data);
-  });
-
-  udpSocket.bind(CONFIG.udp.port, CONFIG.udp.host, () => {
-    const addr = udpSocket.address();
-    console.log(`[UDP] Listening for MAVLink on ${addr.address}:${addr.port}`);
-    console.log('[UDP] Now start the SITL Docker container:');
-    console.log('');
-    console.log('  docker run -it --rm --platform linux/amd64 \\');
-    console.log('    -e LAT=37.5748 -e LON=36.9445 -e ALT=584 -e DIR=0 \\');
-    console.log('    radarku/ardupilot-sitl \\');
-    console.log('    --out=udp:host.docker.internal:14550 \\');
-    console.log('    --out=udp:host.docker.internal:14551');
-    console.log('');
-    console.log('[UDP] QGC: connect via UDP link to localhost:14550');
-    console.log('[UDP] Waiting for packets...');
-  });
-
-  process.on('SIGINT', () => {
-    console.log('\n[LIVE] Shutting down');
-    process.exit(0);
-  });
-}
-
-// ─── Mock Mode ────────────────────────────────────────────────────────────────
-// Generates synthetic sinusoidal telemetry so you can develop and test the
-// Three.js frontend without needing the Docker SITL running.
-// Also generates a synthetic mission route with 6 waypoints.
-
-if (IS_MOCK) {
-  console.log('[MOCK] Mock mode active — generating synthetic telemetry');
-
-  let t = 0;
-  const HOME_LAT = 37.5748; // Kahramanmaraş Sütçüimam University (KSU Avşar Campus)
-  const HOME_LON = 36.9445;
-
-  // ── Synthetic Mission Route ──────────────────────────────────────────────
-  // 6 waypoints forming a hexagonal pattern around the home position
-  const MOCK_ROUTE_RADIUS = 0.0015; // ~167 m
-  const MOCK_WP_COUNT = 6;
-  const mockRoute = [];
-  for (let i = 0; i < MOCK_WP_COUNT; i++) {
-    const angle = (i / MOCK_WP_COUNT) * Math.PI * 2;
-    mockRoute.push({
-      seq: i,
-      lat: HOME_LAT + MOCK_ROUTE_RADIUS * Math.sin(angle),
-      lon: HOME_LON + MOCK_ROUTE_RADIUS * Math.cos(angle),
-      alt: 50 + (i % 3) * 10, // Vary altitude: 50, 60, 70, 50, 60, 70 m
-    });
-  }
-  console.log(`[MOCK] Generated ${mockRoute.length} synthetic waypoints`);
-
-  // Cycle active waypoint every ~8 seconds
-  let mockActiveWp = 0;
-  setInterval(() => {
-    mockActiveWp = (mockActiveWp + 1) % MOCK_WP_COUNT;
-  }, 8000);
-
-  setInterval(() => {
-    t += 0.05;
-    const altitude    = 50 + Math.sin(t * 0.3) * 10;
-    const roll        = Math.sin(t * 0.7) * 0.35;
-    const pitch       = Math.sin(t * 0.5) * 0.2;
-    const yaw         = (t * 0.2) % (Math.PI * 2);
-    const groundspeed = 8 + Math.sin(t * 0.4) * 3;
-    const airspeed    = groundspeed + 1.5;
-    const throttle    = Math.round(40 + Math.sin(t * 0.6) * 20);
-    const lat         = HOME_LAT + 0.001 * Math.sin(t * 0.15);
-    const lon         = HOME_LON + 0.001 * Math.cos(t * 0.15);
-
-    telemetry = {
-      attitude: {
-        roll, pitch, yaw,
-        rollspeed: Math.cos(t * 0.7) * 0.1,
-        pitchspeed: Math.cos(t * 0.5) * 0.05,
-        yawspeed: 0.2,
-      },
-      position: {
-        lat, lon,
-        alt:          altitude + 584,
-        relative_alt: altitude,
-        vx: Math.sin(yaw) * groundspeed * 100,
-        vy: Math.cos(yaw) * groundspeed * 100,
-        vz: Math.sin(t * 0.3) * 30,
-      },
-      battery: {
-        voltage:   16.4 - t * 0.002,
-        current:   12.5 + Math.sin(t) * 2,
-        remaining: Math.max(0, Math.round(100 - t * 0.1)),
-      },
-      vfr: {
-        airspeed, groundspeed,
-        heading:  Math.round((yaw * 180 / Math.PI + 360) % 360),
-        throttle,
-        climb:    Math.cos(t * 0.3) * 1.5,
-      },
-      status: {
-        armed:         true,
-        mode:          'AUTO_MISSION',
-        system_status: 4, // MAV_STATE_ACTIVE
-        connected:     true,
-        active_wp:     mockActiveWp,
-      },
-      route: mockRoute,
-      timestamp: Date.now(),
-    };
-  }, 50);
-
-  process.on('SIGINT', () => {
-    console.log('\n[MOCK] Shutting down mock server');
-    process.exit(0);
-  });
-}
-
-// ─── Live MAVLink Mode ────────────────────────────────────────────────────────
-// Connects to PX4 SITL via UDP, parses MAVLink binary packets,
-// and updates the shared telemetry state.
-
-else {
-  console.log(`[UDP] Binding MAVLink listener on ${CONFIG.udp.host}:${CONFIG.udp.port}`);
-  console.log('[MAV] Waiting for MAVLink parser to initialize...');
-
-  // Initialize the MAVLink parser
-  // Args: sysid=1, compid=1, version="v1.0", definitions=["common"]
-  // PX4 uses the common MAVLink dialect (not ardupilotmega)
-  const mav = new MAVLink(null, 1, 1, 'v1.0', ['common']);
-
-  // ── Mission Download State ──────────────────────────────────────────────
-  let missionExpectedCount = 0;
-  let missionItems = [];
-  let missionDownloading = false;
-  let udpSocket = null;       // set after bind
-  let sitlRemote = null;      // { address, port } of the SITL sender
-
-  /**
-   * Send a MAVLink message buffer to the SITL via UDP.
-   * Requires that we have received at least one packet so we know the remote address.
-   */
-  function sendToSitl(msgBuffer) {
-    if (!udpSocket || !sitlRemote) return;
-    udpSocket.send(msgBuffer, 0, msgBuffer.length, sitlRemote.port, sitlRemote.address);
-  }
-
-  /**
-   * Request the full mission item list from the flight controller.
-   */
-  function requestMissionList() {
-    if (missionDownloading) return;
-    missionDownloading = true;
-    missionItems = [];
-    missionExpectedCount = 0;
-
-    mav.createMessage('MISSION_REQUEST_LIST', {
-      target_system:    1,
-      target_component: 1,
-      mission_type:     0, // MAV_MISSION_TYPE_MISSION
-    }, (msg) => {
-      console.log('[MISSION] Requesting mission list from FC...');
-      sendToSitl(msg.buffer);
-    });
-  }
-
-  /**
-   * Request a single mission item by sequence number.
-   */
-  function requestMissionItem(seq) {
-    // Try MISSION_REQUEST_INT first (preferred), fall back to MISSION_REQUEST
-    const msgName = mav.getMessageID('MISSION_REQUEST_INT') >= 0
-      ? 'MISSION_REQUEST_INT'
-      : 'MISSION_REQUEST';
-
-    mav.createMessage(msgName, {
-      target_system:    1,
-      target_component: 1,
-      seq:              seq,
-      mission_type:     0,
-    }, (msg) => {
-      sendToSitl(msg.buffer);
-    });
-  }
-
-  /**
-   * Send MISSION_ACK after receiving all items.
-   */
-  function sendMissionAck() {
-    mav.createMessage('MISSION_ACK', {
-      target_system:    1,
-      target_component: 1,
-      type:             0, // MAV_MISSION_ACCEPTED
-      mission_type:     0,
-    }, (msg) => {
-      sendToSitl(msg.buffer);
-    });
-  }
-
-  /**
-   * Process a received mission item and store it.
-   */
-  function handleMissionItem(fields) {
     const item = {
       seq: fields.seq,
-      lat: fields.x !== undefined ? fields.x / 1e7 : (fields.lat || 0),
-      lon: fields.y !== undefined ? fields.y / 1e7 : (fields.lon || 0),
-      alt: fields.z || 0,
+      command: fields.command,
+      lat: lat,
+      lon: lon,
+      alt: alt
     };
 
-    // Only store NAV waypoints with valid coordinates (command 16 = MAV_CMD_NAV_WAYPOINT,
-    // 22 = TAKEOFF, 21 = LAND, 20 = RTL, etc.)
-    const navCommands = [16, 17, 18, 19, 20, 21, 22, 31, 82, 84, 85, 112, 113, 115, 195];
-    if (navCommands.includes(fields.command) && (item.lat !== 0 || item.lon !== 0)) {
-      missionItems.push(item);
-    }
+    uploadState.items[fields.seq] = item;
+    uploadState.receivedCount++;
 
-    // Request next item or finalize
-    if (fields.seq + 1 < missionExpectedCount) {
-      requestMissionItem(fields.seq + 1);
+    console.log(`[MAV] Saved item ${fields.seq}/${uploadState.expectedCount} (cmd=${fields.command}, lat=${lat.toFixed(6)}, lon=${lon.toFixed(6)}, alt=${alt}m)`);
+
+    if (uploadState.receivedCount < uploadState.expectedCount) {
+      requestMissionItemFromQGC(uploadState.receivedCount, targetSys, targetComp);
     } else {
-      // All items received
-      sendMissionAck();
-      missionDownloading = false;
+      // Completed upload
+      simState.route = uploadState.items.filter(Boolean).map((wp) => ({
+        seq: wp.seq,
+        lat: wp.lat,
+        lon: wp.lon,
+        alt: wp.alt
+      }));
 
-      // Sort by sequence and update telemetry
-      missionItems.sort((a, b) => a.seq - b.seq);
-      telemetry.route = missionItems.slice();
-      console.log(`[MISSION] Downloaded ${telemetry.route.length} waypoints from FC`);
-      telemetry.route.forEach((wp, i) => {
-        console.log(`  WP${i}: seq=${wp.seq} lat=${wp.lat.toFixed(7)} lon=${wp.lon.toFixed(7)} alt=${wp.alt}m`);
+      simState.active_wp = 0;
+      uploadState.active = false;
+      telemetry.route = simState.route;
+
+      console.log(`[SIM] New mission upload successful! Total waypoints: ${simState.route.length}`);
+
+      mav.createMessage('MISSION_ACK', {
+        target_system: targetSys,
+        target_component: targetComp,
+        type: 0, // ACCEPTED
+        mission_type: 0
+      }, (ackMsg) => {
+        sendToQGC(ackMsg.buffer);
       });
+
+      broadcastTelemetry();
     }
   }
 
-  mav.on('ready', () => {
-    console.log('[MAV] MAVLink parser ready — starting UDP socket');
-
-    // ── UDP Socket ──────────────────────────────────────────────────────────
-    udpSocket = dgram.createSocket('udp4');
-
-    udpSocket.on('error', (err) => {
-      console.error('[UDP] Socket error:', err.message);
-      udpSocket.close();
-    });
-
-    udpSocket.on('message', (data, rinfo) => {
-      // Remember the remote address so we can send messages back
-      if (!sitlRemote) {
-        sitlRemote = { address: rinfo.address, port: rinfo.port };
-        console.log(`[UDP] SITL remote detected at ${rinfo.address}:${rinfo.port}`);
-      }
-      // Feed raw bytes into the MAVLink parser
-      mav.parse(data);
-    });
-
-    udpSocket.bind(CONFIG.udp.port, CONFIG.udp.host, () => {
-      const addr = udpSocket.address();
-      console.log(`[UDP] Listening for MAVLink packets on ${addr.address}:${addr.port}`);
-      console.log('[UDP] Waiting for PX4 SITL packets...');
-      console.log('[UDP] Ensure PX4 SITL is sending to this port via:');
-      console.log('       docker run --rm -it \\');
-      console.log('         -p 14540:14540/udp \\');
-      console.log('         -p 14550:14550/udp \\');
-      console.log('         px4io/px4-dev-simulation-focal \\');
-      console.log('         bash -c "make px4_sitl gazebo"');
-    });
-
-    // ── Heartbeat ────────────────────────────────────────────────────────────
-    let initialMissionRequested = false;
-
-    mav.on('HEARTBEAT', (_msg, fields) => {
-      const armed = isArmed(fields.base_mode);
-      const mode  = decodePX4Mode(fields.custom_mode);
-
-      if (armed !== telemetry.status.armed || mode !== telemetry.status.mode) {
-        console.log(`[MAV] State: ${armed ? 'ARMED' : 'DISARMED'} | Mode: ${mode}`);
-      }
-
-      telemetry.status.armed         = armed;
-      telemetry.status.mode          = mode;
-      telemetry.status.system_status = fields.system_status;
-      telemetry.status.connected     = true;
-
-      // Request mission list once on first heartbeat
-      if (!initialMissionRequested) {
-        initialMissionRequested = true;
-        // Small delay to ensure the parser is fully synced
-        setTimeout(requestMissionList, 2000);
-      }
-    });
-
-    // ── Mission Protocol Handlers ────────────────────────────────────────────
-
-    // MISSION_COUNT — FC tells us how many items are in the mission
-    mav.on('MISSION_COUNT', (_msg, fields) => {
-      missionExpectedCount = fields.count;
-      console.log(`[MISSION] FC reports ${fields.count} mission items`);
-      if (fields.count > 0) {
-        requestMissionItem(0);
-      } else {
-        missionDownloading = false;
-        telemetry.route = [];
-      }
-    });
-
-    // MISSION_ITEM_INT — preferred mission item format (int32 lat/lon × 1E7)
-    mav.on('MISSION_ITEM_INT', (_msg, fields) => {
-      handleMissionItem(fields);
-    });
-
-    // MISSION_ITEM — legacy fallback (float lat/lon)
-    mav.on('MISSION_ITEM', (_msg, fields) => {
-      // Convert float lat/lon to the same format
-      const converted = { ...fields };
-      if (converted.x !== undefined) {
-        // Legacy format uses float x/y directly as lat/lon degrees
-        converted.x = Math.round(converted.x * 1e7);
-        converted.y = Math.round(converted.y * 1e7);
-      }
-      handleMissionItem(converted);
-    });
-
-    // MISSION_ACK — FC acknowledges our transaction; may also signal a new upload from QGC
-    mav.on('MISSION_ACK', (_msg, fields) => {
-      if (fields.type === 0) {
-        console.log('[MISSION] FC acknowledged mission transaction');
-      } else {
-        console.warn(`[MISSION] FC NACK: type=${fields.type}`);
-      }
-    });
-
-    // MISSION_CURRENT — tracks the currently active waypoint during flight
-    mav.on('MISSION_CURRENT', (_msg, fields) => {
-      if (telemetry.status.active_wp !== fields.seq) {
-        console.log(`[MISSION] Active waypoint changed: ${fields.seq}`);
-        telemetry.status.active_wp = fields.seq;
-      }
-    });
-
-    // Detect new mission uploads from QGC by listening for MISSION_ITEM writes
-    // When QGC uploads, it sends MISSION_COUNT first; re-download after a short delay
-    let missionRedownloadTimer = null;
-    const origMissionCountHandler = mav.listeners('MISSION_COUNT');
-    mav.on('MISSION_COUNT', (_msg, fields) => {
-      // If we're not currently downloading, someone (QGC) uploaded a new mission
-      if (!missionDownloading && initialMissionRequested) {
-        console.log('[MISSION] New mission upload detected from QGC, re-downloading...');
-        clearTimeout(missionRedownloadTimer);
-        missionRedownloadTimer = setTimeout(requestMissionList, 3000);
-      }
-    });
-
-    // ── Attitude ─────────────────────────────────────────────────────────────
-    // All values are in radians — sent as-is; frontend handles axis conversion
-    mav.on('ATTITUDE', (_msg, fields) => {
-      telemetry.attitude = {
-        roll:       fields.roll,
-        pitch:      fields.pitch,
-        yaw:        fields.yaw,
-        rollspeed:  fields.rollspeed,
-        pitchspeed: fields.pitchspeed,
-        yawspeed:   fields.yawspeed,
-      };
-    });
-
-    // ── Global Position ───────────────────────────────────────────────────────
-    // lat/lon come as int32 scaled ×1E7; alt/relative_alt as int32 ×1000 (mm → m)
-    mav.on('GLOBAL_POSITION_INT', (_msg, fields) => {
-      telemetry.position = {
-        lat:          fields.lat          / 1e7,
-        lon:          fields.lon          / 1e7,
-        alt:          fields.alt          / 1000, // MSL meters
-        relative_alt: fields.relative_alt / 1000, // AGL meters
-        vx:           fields.vx,
-        vy:           fields.vy,
-        vz:           fields.vz,
-      };
-    });
-
-    // ── System Status (Battery) ───────────────────────────────────────────────
-    // voltage in mV, current in cA
-    mav.on('SYS_STATUS', (_msg, fields) => {
-      telemetry.battery = {
-        voltage:   fields.voltage_battery   / 1000, // mV → V
-        current:   fields.current_battery   / 100,  // cA → A
-        remaining: fields.battery_remaining,         // percent (0–100 or -1 unknown)
-      };
-    });
-
-    // ── VFR HUD ──────────────────────────────────────────────────────────────
-    mav.on('VFR_HUD', (_msg, fields) => {
-      telemetry.vfr = {
-        airspeed:    fields.airspeed,
-        groundspeed: fields.groundspeed,
-        heading:     fields.heading,
-        throttle:    fields.throttle,
-        climb:       fields.climb,
-      };
-    });
-
-    // ── Connection timeout watchdog ──────────────────────────────────────────
-    // Mark as disconnected if no heartbeat arrives within 5 seconds
-    let lastHeartbeat = Date.now();
-    mav.on('HEARTBEAT', () => { lastHeartbeat = Date.now(); });
-    setInterval(() => {
-      if (Date.now() - lastHeartbeat > 5000) {
-        if (telemetry.status.connected) {
-          console.warn('[MAV] No heartbeat received in 5s — marking as disconnected');
-          telemetry.status.connected = false;
-          telemetry.status.armed     = false;
-        }
-      }
-    }, 2000);
+  mav.on('MISSION_ITEM_INT', (msg, fields) => {
+    processMissionItem(fields, msg.system, msg.component);
   });
 
-  mav.on('error', (err) => {
-    console.error('[MAV] Parser error:', err);
+  mav.on('MISSION_ITEM', (msg, fields) => {
+    processMissionItem(fields, msg.system, msg.component);
   });
 
-  process.on('SIGINT', () => {
-    console.log('\n[LIVE] Shutting down MAVLink bridge');
-    process.exit(0);
+  // ── 4. Mission Download Protocol (Drone -> QGC)
+  mav.on('MISSION_REQUEST_LIST', (msg, fields) => {
+    console.log(`[MAV] QGC requested mission list download. Count: ${simState.route.length}`);
+    mav.createMessage('MISSION_COUNT', {
+      target_system: msg.system,
+      target_component: msg.component,
+      count: simState.route.length,
+      mission_type: 0
+    }, (countMsg) => {
+      sendToQGC(countMsg.buffer);
+    });
+  });
+
+  function handleMissionItemRequest(fields, targetSys, targetComp, useInt) {
+    const seq = fields.seq;
+    if (seq < 0 || seq >= simState.route.length) {
+      console.warn(`[MAV] Requested out of bounds waypoint seq: ${seq}`);
+      return;
+    }
+
+    const wp = simState.route[seq];
+    const msgType = useInt ? 'MISSION_ITEM_INT' : 'MISSION_ITEM';
+    const payload = {
+      target_system: targetSys,
+      target_component: targetComp,
+      seq: seq,
+      frame: 6, // MAV_FRAME_GLOBAL_RELATIVE_ALT
+      command: seq === 0 ? 22 : 16, // WP 0 takeoff, rest waypoints
+      current: seq === simState.active_wp ? 1 : 0,
+      autocontinue: 1,
+      param1: 0,
+      param2: 0,
+      param3: 0,
+      param4: 0,
+      x: useInt ? Math.round(wp.lat * 1e7) : wp.lat,
+      y: useInt ? Math.round(wp.lon * 1e7) : wp.lon,
+      z: wp.alt,
+      mission_type: 0
+    };
+
+    mav.createMessage(msgType, payload, (itemMsg) => {
+      sendToQGC(itemMsg.buffer);
+    });
+  }
+
+  mav.on('MISSION_REQUEST_INT', (msg, fields) => {
+    handleMissionItemRequest(fields, msg.system, msg.component, true);
+  });
+
+  mav.on('MISSION_REQUEST', (msg, fields) => {
+    handleMissionItemRequest(fields, msg.system, msg.component, false);
+  });
+
+  mav.on('MISSION_CLEAR_ALL', (msg, fields) => {
+    console.log('[MAV] QGC requested mission clear');
+    simState.route = [];
+    telemetry.route = [];
+    simState.active_wp = 0;
+
+    mav.createMessage('MISSION_ACK', {
+      target_system: msg.system,
+      target_component: msg.component,
+      type: 0, // ACCEPTED
+      mission_type: 0
+    }, (ackMsg) => {
+      sendToQGC(ackMsg.buffer);
+    });
+    broadcastTelemetry();
+  });
+
+  mav.on('MISSION_ACK', (msg, fields) => {
+    console.log(`[MAV] Mission ACK received: type=${fields.type}`);
   });
 }
+
+// ─── Initialize UDP & MAVLink Loop ──────────────────────────────────────────
+mav.on('ready', () => {
+  console.log('[MAV] Messages definition files parsed successfully');
+  mavReady = true;
+
+  setupMAVLinkListeners();
+
+  // Bind local UDP receiver port (14540)
+  udpSocket.on('error', (err) => {
+    console.error('[UDP] Port bind failed or encountered error:', err.message);
+  });
+
+  udpSocket.on('message', (msg) => {
+    // Feed incoming QGC packets into standard MAVLink parser
+    mav.parse(msg);
+  });
+
+  udpSocket.bind(CONFIG.udp.localPort, CONFIG.udp.host, () => {
+    console.log(`[UDP] MAVLink listener bound on port ${CONFIG.udp.localPort}`);
+  });
+
+  // Start periodic MAVLink Heartbeat & SysStatus loops to QGC (1 Hz)
+  setInterval(() => {
+    if (!mavReady) return;
+
+    const { customMode, baseMode } = getHeartbeatModes();
+
+    mav.createMessage('HEARTBEAT', {
+      type: 2,             // MAV_TYPE_QUADROTOR = 2
+      autopilot: 12,       // MAV_AUTOPILOT_PX4 = 12
+      base_mode: baseMode,
+      custom_mode: customMode,
+      system_status: simState.armed ? 4 : 3, // ACTIVE = 4, STANDBY = 3
+      mavlink_version: 3
+    }, (msg) => {
+      sendToQGC(msg.buffer);
+    });
+
+    const voltage = simState.armed ? 15.2 : 16.8;
+    const current = simState.armed ? 12.5 : 0.5;
+    mav.createMessage('SYS_STATUS', {
+      onboard_control_sensors_present: 0,
+      onboard_control_sensors_enabled: 0,
+      onboard_control_sensors_health: 0,
+      load: 100,
+      voltage_battery: Math.round(voltage * 1000), // mV
+      current_battery: Math.round(current * 100),  // cA
+      battery_remaining: Math.round(simState.battery_remaining),
+      drop_rate_comm: 0,
+      errors_comm: 0,
+      errors_count1: 0,
+      errors_count2: 0,
+      errors_count3: 0,
+      errors_count4: 0
+    }, (msg) => {
+      sendToQGC(msg.buffer);
+    });
+  }, 1000);
+
+  // Start high frequency loops: Physics, WS Telemetry, MAVLink Streams (10 Hz / 100ms)
+  setInterval(() => {
+    if (!mavReady) return;
+
+    // 1. Run simulation physics solver
+    updatePhysics();
+
+    // 2. Synchronize simulated fields to the telemetry JSON schema
+    updateTelemetryObject();
+
+    // 3. Broadcast telemetry via WebSocket
+    broadcastTelemetry();
+
+    // 4. Stream MAVLink Attitude to QGC
+    mav.createMessage('ATTITUDE', {
+      time_boot_ms: simState.time_boot_ms,
+      roll: simState.roll,
+      pitch: simState.pitch,
+      yaw: simState.yaw,
+      rollspeed: 0,
+      pitchspeed: 0,
+      yawspeed: 0
+    }, (msg) => {
+      sendToQGC(msg.buffer);
+    });
+
+    // 5. Stream MAVLink Global Position to QGC
+    mav.createMessage('GLOBAL_POSITION_INT', {
+      time_boot_ms: simState.time_boot_ms,
+      lat: Math.round(simState.lat * 1e7),
+      lon: Math.round(simState.lon * 1e7),
+      alt: Math.round((simState.alt + HOME_ALT) * 1000), // alt in mm MSL
+      relative_alt: Math.round(simState.alt * 1000), // alt in mm AGL
+      vx: Math.round(simState.speed * Math.cos(simState.yaw) * 100),
+      vy: Math.round(simState.speed * Math.sin(simState.yaw) * 100),
+      vz: Math.round(-simState.climb * 100),
+      hdg: Math.round(((simState.yaw * 180 / Math.PI + 360) % 360) * 100)
+    }, (msg) => {
+      sendToQGC(msg.buffer);
+    });
+
+    // 6. Stream MAVLink VFR HUD to QGC
+    mav.createMessage('VFR_HUD', {
+      airspeed: simState.speed,
+      groundspeed: simState.speed,
+      heading: Math.round((simState.yaw * 180 / Math.PI + 360) % 360),
+      throttle: simState.armed ? Math.round(40 + (simState.climb * 10) + simState.speed * 2) : 0,
+      alt: simState.alt + HOME_ALT,
+      climb: simState.climb
+    }, (msg) => {
+      sendToQGC(msg.buffer);
+    });
+
+    // 7. Stream active waypoint index
+    if (simState.route.length > 0) {
+      mav.createMessage('MISSION_CURRENT', {
+        seq: simState.active_wp
+      }, (msg) => {
+        sendToQGC(msg.buffer);
+      });
+    }
+  }, 100);
+});
+
+mav.on('error', (err) => {
+  console.error('[MAV] General Parser Error:', err);
+});
+
+// Shutdown hook
+process.on('SIGINT', () => {
+  console.log('\n[SIM] Shutting down Native UAV SITL Simulator.');
+  udpSocket.close();
+  server.close();
+  process.exit(0);
+});

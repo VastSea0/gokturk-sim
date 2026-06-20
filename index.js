@@ -24,6 +24,19 @@ const SMOOTH_ALPHA    = 0.08;   // Drone rotation lerp factor
 const CAMERA_DISTANCE = 8;
 const RAD_TO_DEG      = 180 / Math.PI;
 
+const MPDL            = 111319.5; // metres per degree latitude
+
+let runwayGroup = null;
+const runwaySettings = {
+  show: true,
+  autoAlign: true,
+  heading: 0,
+  length: 300,
+  width: 20,
+  offsetX: 0,
+  offsetZ: 0
+};
+
 // Satellite tile config
 const TILE_ZOOM       = 16;     // Zoom level 16 → ~488m per tile at lat 37°
 const TILE_GRID_HALF  = 3;      // Load (2*3+1)=7×7 = 49 tiles → ~3.4km coverage
@@ -108,7 +121,6 @@ scene.add(fillLight);
 
 /** Convert lat/lon to Three.js XZ world metres relative to a reference origin. */
 function geoToWorld(lat, lon, refLat, refLon) {
-  const MPDL = 111319.5; // metres per degree latitude
   return {
     x:  (lon - refLon) * MPDL * Math.cos(refLat * Math.PI / 180),
     z: -(lat - refLat) * MPDL,
@@ -540,22 +552,311 @@ function buildRouteVisuals(route, refLat, refLon) {
   console.log(`[ROUTE] Built ${route.length} waypoint markers in 3D scene`);
 }
 
-/**
- * Update the active waypoint highlight.
- */
-function updateActiveWaypoint(activeSeq) {
-  wpMeshes.forEach((mesh, i) => {
-    const isActive = mesh.userData.wpSeq === activeSeq;
-    mesh.material.color.set(isActive ? 0x4ade80 : 0x38bdf8);
-    mesh.material.emissive.set(isActive ? 0x4ade80 : 0x38bdf8);
-    mesh.material.emissiveIntensity = isActive ? 1.2 : 0.4;
-    mesh.scale.setScalar(isActive ? 1.5 : 1.0);
+// ─── Runway (Pist) Construction ──────────────────────────────────────────────
+function createRunway(options = {}) {
+  // If runway exists, remove it first
+  if (runwayGroup) {
+    scene.remove(runwayGroup);
+    runwayGroup.traverse((child) => {
+      if (child.geometry) child.geometry.dispose();
+      if (child.material) {
+        if (Array.isArray(child.material)) {
+          child.material.forEach(m => m.dispose());
+        } else {
+          child.material.dispose();
+        }
+      }
+    });
+    runwayGroup = null;
+  }
 
-    if (wpGlowLights[i]) {
-      wpGlowLights[i].color.set(isActive ? 0x4ade80 : 0x38bdf8);
-      wpGlowLights[i].intensity = isActive ? 2.0 : 0.6;
-      wpGlowLights[i].distance = isActive ? 25 : 15;
+  if (!options.show) return;
+
+  const length = options.length || 300;
+  const width = options.width || 20;
+  const heading = options.heading || 0; // degrees
+  const offsetX = options.offsetX || 0;
+  const offsetZ = options.offsetZ || 0;
+
+  runwayGroup = new THREE.Group();
+  runwayGroup.name = 'runway';
+
+  // Asphalt plane
+  const asphaltGeo = new THREE.PlaneGeometry(width, length);
+  const asphaltMat = new THREE.MeshStandardMaterial({
+    color: 0x0f172a, // premium dark slate
+    roughness: 0.85,
+    metalness: 0.1,
+  });
+  const asphalt = new THREE.Mesh(asphaltGeo, asphaltMat);
+  asphalt.rotation.x = -Math.PI / 2;
+  asphalt.receiveShadow = true;
+  runwayGroup.add(asphalt);
+
+  // Markings (Y=0.01 relative to asphalt)
+  const markingHeight = 0.015;
+  const whiteMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+  const redMat = new THREE.MeshBasicMaterial({ color: 0xef4444 });
+  const greenMat = new THREE.MeshBasicMaterial({ color: 0x10b981 });
+
+  // Border lines
+  const borderGeo = new THREE.PlaneGeometry(0.3, length);
+  const leftBorder = new THREE.Mesh(borderGeo, whiteMat);
+  leftBorder.rotation.x = -Math.PI / 2;
+  leftBorder.position.set(-width / 2 + 0.3, markingHeight, 0);
+  runwayGroup.add(leftBorder);
+
+  const rightBorder = new THREE.Mesh(borderGeo, whiteMat);
+  rightBorder.rotation.x = -Math.PI / 2;
+  rightBorder.position.set(width / 2 - 0.3, markingHeight, 0);
+  runwayGroup.add(rightBorder);
+
+  // Center dashed line
+  const dashLength = 10;
+  const dashGap = 10;
+  const totalDashes = Math.floor(length / (dashLength + dashGap));
+  const dashGeo = new THREE.PlaneGeometry(0.35, dashLength);
+
+  for (let i = 0; i < totalDashes; i++) {
+    const dash = new THREE.Mesh(dashGeo, whiteMat);
+    dash.rotation.x = -Math.PI / 2;
+    const zPos = -length / 2 + i * (dashLength + dashGap) + dashLength / 2;
+    dash.position.set(0, markingHeight, zPos);
+    runwayGroup.add(dash);
+  }
+
+  // Threshold piano keys
+  const stripeWidth = 0.6;
+  const stripeLength = 10;
+  const stripeGap = 0.4;
+  const stripeGeo = new THREE.PlaneGeometry(stripeWidth, stripeLength);
+  const numStripes = 6;
+  const startX = -((numStripes - 1) * (stripeWidth + stripeGap)) / 2;
+
+  for (let end = -1; end <= 1; end += 2) {
+    const zPos = end * (length / 2 - stripeLength / 2 - 2);
+    for (let i = 0; i < numStripes; i++) {
+      const stripe = new THREE.Mesh(stripeGeo, whiteMat);
+      stripe.rotation.x = -Math.PI / 2;
+      stripe.position.set(startX + i * (stripeWidth + stripeGap), markingHeight, zPos);
+      runwayGroup.add(stripe);
     }
+  }
+
+  // Runway edge lights (spheres)
+  const lightCount = Math.floor(length / 20);
+  const lightGeo = new THREE.SphereGeometry(0.12, 8, 8);
+  for (let i = 0; i <= lightCount; i++) {
+    const zPos = -length / 2 + i * (length / lightCount);
+    
+    // Left edge
+    const lLight = new THREE.Mesh(lightGeo, whiteMat);
+    lLight.position.set(-width / 2, 0.1, zPos);
+    runwayGroup.add(lLight);
+
+    // Right edge
+    const rLight = new THREE.Mesh(lightGeo, whiteMat);
+    rLight.position.set(width / 2, 0.1, zPos);
+    runwayGroup.add(rLight);
+  }
+
+  // End lights (Green = start, Red = end)
+  for (let i = -3; i <= 3; i++) {
+    const xPos = i * (width / 8);
+    
+    // Threshold start (Green)
+    const gLight = new THREE.Mesh(lightGeo, greenMat);
+    gLight.position.set(xPos, 0.1, length / 2);
+    runwayGroup.add(gLight);
+
+    // Threshold end (Red)
+    const rLight = new THREE.Mesh(lightGeo, redMat);
+    rLight.position.set(xPos, 0.1, -length / 2);
+    runwayGroup.add(rLight);
+  }
+
+  // Rotate group
+  runwayGroup.rotation.y = -heading * Math.PI / 180;
+  runwayGroup.position.set(offsetX, 0.16, offsetZ);
+
+  scene.add(runwayGroup);
+}
+
+// ─── QGroundControl Plan Parser ──────────────────────────────────────────────
+function parseQGCPlan(jsonText) {
+  const data = JSON.parse(jsonText);
+  if (!data || (data.fileType !== 'Plan' && !data.mission)) {
+    throw new Error('Not a valid QGroundControl Plan file');
+  }
+
+  const route = [];
+  let seq = 0;
+
+  if (data.mission && Array.isArray(data.mission.items)) {
+    data.mission.items.forEach((item) => {
+      if (item.type === 'SimpleItem' && Array.isArray(item.params)) {
+        const cmd = item.command;
+        const lat = item.params[4];
+        const lon = item.params[5];
+        const alt = item.params[6];
+
+        if (typeof lat === 'number' && typeof lon === 'number' && lat !== 0 && lon !== 0) {
+          route.push({
+            seq: seq++,
+            lat: lat,
+            lon: lon,
+            alt: typeof alt === 'number' ? alt : 50,
+            command: cmd
+          });
+        }
+      }
+    });
+  }
+
+  return { route };
+}
+
+// Helper to send command to websocket
+function sendWsCommand(command) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify(command));
+  }
+}
+
+// Runway Auto-Align vector math
+function triggerAutoAlign(route) {
+  if (route && route.length >= 2) {
+    const wp0 = route[0];
+    const wp1 = route[1];
+    const dx = (wp1.lon - wp0.lon) * MPDL * Math.cos(wp0.lat * Math.PI / 180);
+    const dz = -(wp1.lat - wp0.lat) * MPDL;
+    
+    let headingRad = Math.atan2(dx, -dz);
+    let headingDeg = headingRad * 180 / Math.PI;
+    if (headingDeg < 0) headingDeg += 360;
+    
+    runwaySettings.heading = Math.round(headingDeg);
+    
+    const elHeading = document.getElementById('runway-heading');
+    const elHeadingVal = document.getElementById('val-runway-heading');
+    if (elHeading) elHeading.value = runwaySettings.heading;
+    if (elHeadingVal) elHeadingVal.textContent = `${runwaySettings.heading}°`;
+  }
+}
+
+// ─── Runway Controls Binding ─────────────────────────────────────────────────
+function initSimulationAndRunway() {
+  createRunway(runwaySettings);
+
+  const elShow = document.getElementById('runway-show');
+  const elAutoAlign = document.getElementById('runway-auto-align');
+  const elHeading = document.getElementById('runway-heading');
+  const elHeadingVal = document.getElementById('val-runway-heading');
+  const elLength = document.getElementById('runway-length');
+  const elLengthVal = document.getElementById('val-runway-length');
+  const elWidth = document.getElementById('runway-width');
+  const elWidthVal = document.getElementById('val-runway-width');
+  const elOffsetX = document.getElementById('runway-offset-x');
+  const elOffsetXVal = document.getElementById('val-runway-offset-x');
+  const elOffsetZ = document.getElementById('runway-offset-z');
+  const elOffsetZVal = document.getElementById('val-runway-offset-z');
+
+  elShow.addEventListener('change', (e) => {
+    runwaySettings.show = e.target.checked;
+    createRunway(runwaySettings);
+  });
+
+  elAutoAlign.addEventListener('change', (e) => {
+    runwaySettings.autoAlign = e.target.checked;
+    elHeading.disabled = runwaySettings.autoAlign;
+    if (runwaySettings.autoAlign && lastTelemetry && lastTelemetry.route) {
+      triggerAutoAlign(lastTelemetry.route);
+    }
+    createRunway(runwaySettings);
+  });
+
+  elHeading.addEventListener('input', (e) => {
+    runwaySettings.heading = parseInt(e.target.value, 10);
+    elHeadingVal.textContent = `${runwaySettings.heading}°`;
+    createRunway(runwaySettings);
+  });
+
+  elLength.addEventListener('input', (e) => {
+    runwaySettings.length = parseInt(e.target.value, 10);
+    elLengthVal.textContent = `${runwaySettings.length}m`;
+    createRunway(runwaySettings);
+  });
+
+  elWidth.addEventListener('input', (e) => {
+    runwaySettings.width = parseInt(e.target.value, 10);
+    elWidthVal.textContent = `${runwaySettings.width}m`;
+    createRunway(runwaySettings);
+  });
+
+  elOffsetX.addEventListener('input', (e) => {
+    runwaySettings.offsetX = parseInt(e.target.value, 10);
+    elOffsetXVal.textContent = `${runwaySettings.offsetX}m`;
+    createRunway(runwaySettings);
+  });
+
+  elOffsetZ.addEventListener('input', (e) => {
+    runwaySettings.offsetZ = parseInt(e.target.value, 10);
+    elOffsetZVal.textContent = `${runwaySettings.offsetZ}m`;
+    createRunway(runwaySettings);
+  });
+
+  // Simulation bindings
+  const elBtnArm = document.getElementById('btn-arm');
+  const elBtnReset = document.getElementById('btn-reset');
+  const elBtnUpload = document.getElementById('btn-upload');
+  const elInputUpload = document.getElementById('plan-upload-input');
+  const elPlanInfo = document.getElementById('plan-info');
+
+  elBtnArm.addEventListener('click', () => {
+    const isCurrentlyArmed = lastTelemetry && lastTelemetry.status.armed;
+    sendWsCommand({
+      type: 'arm',
+      value: !isCurrentlyArmed
+    });
+  });
+
+  elBtnReset.addEventListener('click', () => {
+    sendWsCommand({ type: 'reset' });
+  });
+
+  elBtnUpload.addEventListener('click', () => {
+    elInputUpload.click();
+  });
+
+  elInputUpload.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const plan = parseQGCPlan(event.target.result);
+        if (plan.route.length === 0) {
+          alert('Plan dosyasında geçerli waypoint bulunamadı.');
+          return;
+        }
+
+        elPlanInfo.textContent = `${file.name} (${plan.route.length} WP)`;
+        sendWsCommand({
+          type: 'set_route',
+          route: plan.route
+        });
+        
+        if (runwaySettings.autoAlign) {
+          triggerAutoAlign(plan.route);
+          createRunway(runwaySettings);
+        }
+      } catch (err) {
+        alert(`Plan yükleme hatası: ${err.message}`);
+        console.error(err);
+      }
+    };
+    reader.readAsText(file);
   });
 }
 
@@ -608,6 +909,7 @@ function setConnectionUI(connected) {
   elConnLabel.style.color = connected ? 'var(--color-green)' : '';
 }
 
+initSimulationAndRunway();
 connectWebSocket();
 
 // ─── Attitude Indicator (ADI) ─────────────────────────────────────────────────
@@ -743,6 +1045,17 @@ function updateHUD(t) {
   }
   el.modeLabel.textContent = t.status.mode || '---';
   elWsLatency.textContent  = isConnected ? `WS: ${wsLatencyMs} ms` : 'WS: ---';
+
+  const elBtnArm = document.getElementById('btn-arm');
+  if (elBtnArm) {
+    if (t.status.armed) {
+      elBtnArm.textContent = 'DISARM VEHICLE';
+      elBtnArm.classList.add('armed-btn');
+    } else {
+      elBtnArm.textContent = 'ARM VEHICLE';
+      elBtnArm.classList.remove('armed-btn');
+    }
+  }
 }
 
 // ─── UTC Clock ────────────────────────────────────────────────────────────────
@@ -832,7 +1145,7 @@ function animate() {
     smoothYaw += yawDelta * SMOOTH_ALPHA;
 
     droneGroup.rotation.set(-smoothPitch, -smoothYaw, smoothRoll, 'ZYX');
-    droneGroup.position.y = smoothAlt;
+    droneGroup.position.y = smoothAlt + 0.63; // 0.63m offset to place landing feet perfectly on the ground
 
     // ── GPS position → XZ world ──────────────────────────────────────────
     if (homeLat !== null && t.position.lat !== 0) {
@@ -861,6 +1174,11 @@ function animate() {
         lastRouteJSON = routeJSON;
         buildRouteVisuals(t.route, homeLat, homeLon);
         lastActiveWp = -1; // force active wp update
+        
+        if (runwaySettings.autoAlign) {
+          triggerAutoAlign(t.route);
+          createRunway(runwaySettings);
+        }
       }
       // Update active waypoint highlight
       const currentWp = t.status?.active_wp ?? -1;
