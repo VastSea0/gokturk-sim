@@ -199,6 +199,32 @@
         </div>
       </section>
 
+      <!-- ── RIGHT: Map Settings ──────────────────────────────────────────── -->
+      <section class="hud-panel hud-panel--right" id="panel-map" aria-label="Map settings">
+        <h2 class="panel-title">MAP SETTINGS</h2>
+        <div class="map-controls">
+          <div class="control-row">
+            <span class="control-label">Provider</span>
+            <select id="map-provider" class="map-select">
+              <option value="esri" selected>Esri Satellite</option>
+              <option value="google">Google Satellite</option>
+            </select>
+          </div>
+          <div class="control-slider-group">
+            <div class="slider-header">
+              <span class="control-label">Zoom Level</span>
+              <span class="slider-value" id="val-map-zoom">17</span>
+            </div>
+            <input type="range" id="map-zoom" min="15" max="19" step="1" value="17" />
+          </div>
+          <div class="map-stats">
+            <span class="data-label">TILES</span>
+            <span class="data-value mono" id="val-tile-count">0</span>
+          </div>
+          <div id="map-attribution" class="map-attribution-text">Esri, Maxar, Earthstar Geographics</div>
+        </div>
+      </section>
+
       <!-- ── BOTTOM: Mode / Arm status ───────────────────────────────────── -->
       <div id="status-bar">
         <div class="status-pill" id="arm-pill">

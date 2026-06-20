@@ -11,6 +11,13 @@ export default defineConfig({
         rewrite: (path) => path.replace(/^\/esri-tiles/, ''),
         secure: true,
       },
+      // Proxy Google Satellite tile requests to avoid CORS on localhost
+      '/google-tiles': {
+        target: 'https://mt1.google.com',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/google-tiles/, ''),
+        secure: true,
+      },
     },
   },
   build: {

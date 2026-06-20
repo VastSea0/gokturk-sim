@@ -3,7 +3,7 @@
  *
  * Major features:
  *  1. Realistic sky dome (Three.js Sky shader with sun position)
- *  2. ESRI World Imagery satellite tiles as 3D ground (7×7 at zoom 16)
+ *  2. Dynamic satellite tile manager (Esri / Google, zoom 15-19, auto-load/unload)
  *  3. Hemisphere + directional lighting matched to sky sun
  *  4. Procedural quadcopter drone model
  *  5. NED → Three.js Y-up coordinate transforms
@@ -37,9 +37,13 @@ const runwaySettings = {
   offsetZ: 0
 };
 
-// Satellite tile config
-const TILE_ZOOM       = 16;     // Zoom level 16 → ~488m per tile at lat 37°
-const TILE_GRID_HALF  = 3;      // Load (2*3+1)=7×7 = 49 tiles → ~3.4km coverage
+// Satellite tile config — defaults (overridable via UI)
+const DEFAULT_TILE_ZOOM = 17;
+const DEFAULT_TILE_GRID_HALF = 5;     // (2*5+1)=11×11 = 121 tiles
+const TILE_PROVIDERS = {
+  esri:   { name: 'Esri World Imagery',   label: 'ESRI' },
+  google: { name: 'Google Satellite',      label: 'GOOGLE' },
+};
 
 // ─── Renderer ─────────────────────────────────────────────────────────────────
 
@@ -148,85 +152,211 @@ function tileNW(tx, ty, z) {
   return { lat, lon };
 }
 
-// ─── Satellite Tile Loader ─────────────────────────────────────────────────────
+// ─── Dynamic Tile Manager ──────────────────────────────────────────────────────
 /**
- * Fetches ESRI World Imagery tiles for a 7×7 grid centred on (homeLat, homeLon)
- * and places each as a textured PlaneGeometry in the Three.js scene.
+ * Dynamically loads / unloads satellite map tiles as the drone moves.
+ * Supports Esri World Imagery and Google Satellite providers.
+ * Manages GPU memory by disposing textures & geometry of off-screen tiles.
  *
- * ESRI World Imagery URL format: /tile/{z}/{y}/{x}  (note: y before x)
- * Attribution required: "Esri, Maxar, Earthstar Geographics, and the GIS User Community"
+ * Usage:
+ *   const tm = new TileManager(scene, refLat, refLon);
+ *   // each frame or periodically:
+ *   tm.update(currentLat, currentLon);
+ *   // switch provider:
+ *   tm.setProvider('google');
+ *   // change zoom:
+ *   tm.setZoom(18);
  */
-function loadSatelliteTiles(homeLat, homeLon) {
-  const cx = lonToTileX(homeLon, TILE_ZOOM);
-  const cy = latToTileY(homeLat, TILE_ZOOM);
+class TileManager {
+  constructor(targetScene, refLat, refLon) {
+    this.scene    = targetScene;
+    this.refLat   = refLat;
+    this.refLon   = refLon;
+    this.zoom     = DEFAULT_TILE_ZOOM;
+    this.gridHalf = DEFAULT_TILE_GRID_HALF;
+    this.provider = 'esri';    // 'esri' | 'google'
+    this.tiles    = new Map(); // key "z/tx/ty" → { mesh, state:'loading'|'ready' }
+    this.texLoader = new THREE.TextureLoader();
+    this.lastCx   = null;      // last centre tile X (to avoid redundant updates)
+    this.lastCy   = null;
+    this._pendingCount = 0;
+    this._readyCount   = 0;
+  }
 
-  const texLoader = new THREE.TextureLoader();
-
-  let loaded = 0;
-  const total = (TILE_GRID_HALF * 2 + 1) ** 2;
-
-  for (let dy = -TILE_GRID_HALF; dy <= TILE_GRID_HALF; dy++) {
-    for (let dx = -TILE_GRID_HALF; dx <= TILE_GRID_HALF; dx++) {
-      const tx = cx + dx;
-      const ty = cy + dy;
-
-      // Tile geographic corners
-      const nw = tileNW(tx,     ty,     TILE_ZOOM);
-      const se = tileNW(tx + 1, ty + 1, TILE_ZOOM);
-
-      // Convert corners to world space
-      const nwW = geoToWorld(nw.lat, nw.lon, homeLat, homeLon);
-      const seW = geoToWorld(se.lat, se.lon, homeLat, homeLon);
-
-      const tileW = seW.x - nwW.x;           // east-west extent (metres)
-      const tileD = nwW.z - seW.z;           // north-south extent (metres, positive)
-      const tileCx = (nwW.x + seW.x) / 2;
-      const tileCz = (nwW.z + seW.z) / 2;
-
-      // Use Vite proxy in dev (avoids CORS); direct URL in production
-      const isDev = location.port === '5173';
-      const url   = isDev
-        ? `/esri-tiles/ArcGIS/rest/services/World_Imagery/MapServer/tile/${TILE_ZOOM}/${ty}/${tx}`
-        : `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${TILE_ZOOM}/${ty}/${tx}`;
-
-      texLoader.load(
-        url,
-        (tex) => {
-          tex.colorSpace = THREE.SRGBColorSpace;
-          tex.minFilter  = THREE.LinearMipmapLinearFilter;
-          tex.generateMipmaps = true;
-
-          const geo  = new THREE.PlaneGeometry(tileW, tileD);
-          const mat  = new THREE.MeshLambertMaterial({ map: tex });
-          const mesh = new THREE.Mesh(geo, mat);
-          mesh.rotation.x    = -Math.PI / 2;
-          mesh.position.set(tileCx, 0, tileCz);
-          mesh.receiveShadow = true;
-          scene.add(mesh);
-
-          loaded++;
-          const pct = Math.round(loaded / total * 100);
-          const loadEl = document.getElementById('tile-loading');
-          if (loadEl) {
-            loadEl.textContent = loaded < total ? `Loading map… ${pct}%` : '';
-            if (loaded >= total) setTimeout(() => { loadEl.style.opacity = '0'; }, 800);
-          }
-        },
-        undefined,
-        () => {
-          // On error, fall back to a plain grass-coloured tile
-          const geo  = new THREE.PlaneGeometry(tileW, tileD);
-          const mat  = new THREE.MeshLambertMaterial({ color: 0x5a7a3a });
-          const mesh = new THREE.Mesh(geo, mat);
-          mesh.rotation.x = -Math.PI / 2;
-          mesh.position.set(tileCx, 0, tileCz);
-          scene.add(mesh);
-          loaded++;
-        }
-      );
+  /** Build a tile image URL with Vite-proxy awareness. */
+  _tileUrl(z, ty, tx) {
+    const isDev = ['5173','5174','5175','5176'].includes(location.port);
+    switch (this.provider) {
+      case 'google':
+        return isDev
+          ? `/google-tiles/vt/lyrs=s&x=${tx}&y=${ty}&z=${z}`
+          : `https://mt1.google.com/vt/lyrs=s&x=${tx}&y=${ty}&z=${z}`;
+      case 'esri':
+      default:
+        return isDev
+          ? `/esri-tiles/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${ty}/${tx}`
+          : `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${ty}/${tx}`;
     }
   }
+
+  /** Call every frame (internally rate-limits). Loads new tiles, removes distant. */
+  update(lat, lon) {
+    const cx = lonToTileX(lon, this.zoom);
+    const cy = latToTileY(lat, this.zoom);
+
+    // Skip if centre tile hasn't changed
+    if (cx === this.lastCx && cy === this.lastCy) return;
+    this.lastCx = cx;
+    this.lastCy = cy;
+
+    const neededKeys = new Set();
+
+    for (let dy = -this.gridHalf; dy <= this.gridHalf; dy++) {
+      for (let dx = -this.gridHalf; dx <= this.gridHalf; dx++) {
+        const tx = cx + dx;
+        const ty = cy + dy;
+        const key = `${this.zoom}/${tx}/${ty}`;
+        neededKeys.add(key);
+
+        if (!this.tiles.has(key)) {
+          this._loadTile(tx, ty, key);
+        }
+      }
+    }
+
+    // Remove tiles that are no longer needed
+    for (const [key, entry] of this.tiles) {
+      if (!neededKeys.has(key)) {
+        this._disposeTile(key, entry);
+      }
+    }
+
+    this._updateLoadingUI();
+  }
+
+  /** Load a single tile and place it in the scene. */
+  _loadTile(tx, ty, key) {
+    // Mark as loading (null mesh)
+    this.tiles.set(key, { mesh: null, state: 'loading' });
+    this._pendingCount++;
+
+    const nw  = tileNW(tx,     ty,     this.zoom);
+    const se  = tileNW(tx + 1, ty + 1, this.zoom);
+    const nwW = geoToWorld(nw.lat, nw.lon, this.refLat, this.refLon);
+    const seW = geoToWorld(se.lat, se.lon, this.refLat, this.refLon);
+
+    const tileW  = seW.x - nwW.x;
+    const tileD  = nwW.z - seW.z;
+    const tileCx = (nwW.x + seW.x) / 2;
+    const tileCz = (nwW.z + seW.z) / 2;
+
+    const url = this._tileUrl(this.zoom, ty, tx);
+
+    this.texLoader.load(
+      url,
+      (tex) => {
+        // Tile may have been disposed while loading
+        if (!this.tiles.has(key)) { tex.dispose(); return; }
+
+        tex.colorSpace      = THREE.SRGBColorSpace;
+        tex.minFilter       = THREE.LinearMipmapLinearFilter;
+        tex.generateMipmaps = true;
+        tex.anisotropy      = Math.min(4, renderer.capabilities.getMaxAnisotropy());
+
+        const geo  = new THREE.PlaneGeometry(Math.abs(tileW), Math.abs(tileD));
+        const mat  = new THREE.MeshLambertMaterial({ map: tex });
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.rotation.x    = -Math.PI / 2;
+        mesh.position.set(tileCx, 0, tileCz);
+        mesh.receiveShadow = true;
+        this.scene.add(mesh);
+
+        this.tiles.set(key, { mesh, state: 'ready' });
+        this._pendingCount--;
+        this._readyCount++;
+        this._updateLoadingUI();
+      },
+      undefined,
+      () => {
+        // On error, fall back to plain terrain colour
+        if (!this.tiles.has(key)) return;
+
+        const geo  = new THREE.PlaneGeometry(Math.abs(tileW), Math.abs(tileD));
+        const mat  = new THREE.MeshLambertMaterial({ color: 0x5a7a3a });
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.rotation.x = -Math.PI / 2;
+        mesh.position.set(tileCx, 0, tileCz);
+        this.scene.add(mesh);
+
+        this.tiles.set(key, { mesh, state: 'ready' });
+        this._pendingCount--;
+        this._readyCount++;
+        this._updateLoadingUI();
+      }
+    );
+  }
+
+  /** Dispose a tile's GPU resources and remove from scene + map. */
+  _disposeTile(key, entry) {
+    if (entry && entry.mesh) {
+      this.scene.remove(entry.mesh);
+      if (entry.mesh.material.map) entry.mesh.material.map.dispose();
+      entry.mesh.material.dispose();
+      entry.mesh.geometry.dispose();
+    }
+    this.tiles.delete(key);
+  }
+
+  /** Update the on-screen loading indicator. */
+  _updateLoadingUI() {
+    const el = document.getElementById('tile-loading');
+    if (!el) return;
+    if (this._pendingCount > 0) {
+      el.textContent = `Loading map… ${this._pendingCount} tiles`;
+      el.style.opacity = '1';
+    } else {
+      el.textContent = `Map ✓ ${this._readyCount} tiles`;
+      setTimeout(() => { el.style.opacity = '0'; }, 1200);
+    }
+  }
+
+  /** Switch tile provider (clears all tiles and reloads). */
+  setProvider(provider) {
+    if (this.provider === provider) return;
+    this.provider = provider;
+    this._clearAll();
+    // Update attribution text
+    const attr = document.getElementById('map-attribution');
+    if (attr) {
+      attr.textContent = provider === 'google'
+        ? 'Map data © Google'
+        : 'Esri, Maxar, Earthstar Geographics';
+    }
+  }
+
+  /** Change zoom level (clears all tiles and reloads). */
+  setZoom(zoom) {
+    zoom = Math.max(15, Math.min(19, zoom));
+    if (this.zoom === zoom) return;
+    this.zoom = zoom;
+    this._clearAll();
+  }
+
+  /** Remove and dispose every tile. Forces full re-download on next update(). */
+  _clearAll() {
+    for (const [key, entry] of this.tiles) {
+      this._disposeTile(key, entry);
+    }
+    this.tiles.clear();
+    this.lastCx = null;
+    this.lastCy = null;
+    this._pendingCount = 0;
+    this._readyCount   = 0;
+  }
 }
+
+/** Global TileManager instance (created when home position is known). */
+let tileManager = null;
 
 // ─── Fine Reference Grid (very subtle, drawn on top of satellite) ─────────────
 
@@ -860,11 +990,42 @@ function initSimulationAndRunway() {
   });
 }
 
+// ─── Map Controls Binding ─────────────────────────────────────────────────────
+function initMapControls() {
+  const elProvider = document.getElementById('map-provider');
+  const elZoom     = document.getElementById('map-zoom');
+  const elZoomVal  = document.getElementById('val-map-zoom');
+
+  if (elProvider) {
+    elProvider.addEventListener('change', (e) => {
+      if (tileManager) {
+        tileManager.setProvider(e.target.value);
+        // Force re-download at current drone position
+        tileManager.lastCx = null;
+        tileManager.lastCy = null;
+      }
+    });
+  }
+
+  if (elZoom) {
+    elZoom.addEventListener('input', (e) => {
+      const z = parseInt(e.target.value, 10);
+      if (elZoomVal) elZoomVal.textContent = z;
+      if (tileManager) {
+        tileManager.setZoom(z);
+        // Force re-download at current drone position
+        tileManager.lastCx = null;
+        tileManager.lastCy = null;
+      }
+    });
+  }
+}
+
 // ─── Smooth State ─────────────────────────────────────────────────────────────
 
 let smoothRoll = 0, smoothPitch = 0, smoothYaw = 0, smoothAlt = 10;
 let homeLat = null, homeLon = null;
-let tilesLoaded = false;
+// tilesLoaded replaced by tileManager !== null check
 
 // ─── WebSocket Client ─────────────────────────────────────────────────────────
 
@@ -910,6 +1071,7 @@ function setConnectionUI(connected) {
 }
 
 initSimulationAndRunway();
+initMapControls();
 connectWebSocket();
 
 // ─── Attitude Indicator (ADI) ─────────────────────────────────────────────────
@@ -1056,6 +1218,12 @@ function updateHUD(t) {
       elBtnArm.classList.remove('armed-btn');
     }
   }
+
+  // ── Map tile count ─────────────────────────────────────────────────────
+  const elTileCount = document.getElementById('val-tile-count');
+  if (elTileCount && tileManager) {
+    elTileCount.textContent = tileManager.tiles.size;
+  }
 }
 
 // ─── UTC Clock ────────────────────────────────────────────────────────────────
@@ -1123,12 +1291,19 @@ function animate() {
   if (lastTelemetry) {
     const t = lastTelemetry;
 
-    // ── Load satellite tiles once we have a home position ─────────────────
-    if (!tilesLoaded && t.position.lat !== 0) {
-      homeLat = t.position.lat;
-      homeLon = t.position.lon;
-      loadSatelliteTiles(homeLat, homeLon);
-      tilesLoaded = true;
+    // ── Dynamic tile manager: create on first position, update each frame ─
+    if (t.position.lat !== 0) {
+      if (!tileManager) {
+        homeLat = t.position.lat;
+        homeLon = t.position.lon;
+        tileManager = new TileManager(scene, homeLat, homeLon);
+        // Apply saved UI settings
+        const provEl = document.getElementById('map-provider');
+        if (provEl) tileManager.setProvider(provEl.value);
+        const zoomEl = document.getElementById('map-zoom');
+        if (zoomEl) tileManager.setZoom(parseInt(zoomEl.value));
+      }
+      tileManager.update(t.position.lat, t.position.lon);
     }
 
     // ── Attitude smoothing (NED → Three.js Y-up) ─────────────────────────
