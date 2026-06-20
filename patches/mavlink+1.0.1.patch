@@ -1,0 +1,81 @@
+diff --git a/node_modules/mavlink/src/mavlink.js b/node_modules/mavlink/src/mavlink.js
+index f5274b3..5d68bcb 100755
+--- a/node_modules/mavlink/src/mavlink.js
++++ b/node_modules/mavlink/src/mavlink.js
+@@ -1,7 +1,8 @@
+ var fs = require('fs'),
+ 	xml2js = require('xml2js');
+ var EventEmitter = require('events').EventEmitter;
+-var parser = new xml2js.Parser();
++// NOTE: xml2js Parser instances are NOT reentrant — creating one per readFile
++// call instead of sharing a global instance (fixes race condition on Node >= v16).
+ 
+ var DEBUG = 0;
+ 
+@@ -165,7 +166,8 @@ mavlink.prototype.loadDefinitions = function() {
+ 			//Read the XML file and parse it when loaded
+ 			fs.readFile(__dirname + '/mavlink/message_definitions/' + self.version + '/' + self.definitions[i] + '.xml', function(err, data) {
+ 				
+-				//Pass XML data to the parser
++			//Pass XML data to the parser — create a fresh instance per file
++				var parser = new xml2js.Parser();
+ 				parser.parseString(data, function (err, result) {
+ 					if (DEBUG) {
+ 						console.log("MAVLink: Parsing " + self.definitions[i] + ".xml");
+@@ -175,12 +177,16 @@ mavlink.prototype.loadDefinitions = function() {
+ 					if (DEBUG) {
+ 						console.log("MAVLink: " + self.definitions[i] + " enums");
+ 					}
+-					self.addEnums(result['mavlink']['enums'][0]['enum']);
+-
+-					if (DEBUG) {
+-						console.log("MAVLink: " + self.definitions[i] + " messages");
++					// Guard: some XML files have no enums or messages block
++					if (result && result['mavlink']) {
++						if (result['mavlink']['enums'] && result['mavlink']['enums'][0] && result['mavlink']['enums'][0]['enum']) {
++							self.addEnums(result['mavlink']['enums'][0]['enum']);
++						}
++						if (result['mavlink']['messages'] && result['mavlink']['messages'][0] && result['mavlink']['messages'][0].message) {
++							self.addMessages(result['mavlink']['messages'][0].message);
++						}
+ 					}
+-					self.addMessages(result['mavlink']['messages'][0].message);
++
+ 					
+ 					//When all files has been parsed, emit event
+ 					if (parsed++ == self.definitions.length-1) {
+diff --git a/node_modules/mavlink/src/mavlink/message_definitions/v1.0/common.xml b/node_modules/mavlink/src/mavlink/message_definitions/v1.0/common.xml
+index b00bd84..83d8688 100755
+--- a/node_modules/mavlink/src/mavlink/message_definitions/v1.0/common.xml
++++ b/node_modules/mavlink/src/mavlink/message_definitions/v1.0/common.xml
+@@ -1641,6 +1641,29 @@
+                <field type="uint32_t" name="time_boot_ms">Timestamp (milliseconds since system boot)</field>
+                <field type="uint8_t" name="ind">index of debug variable</field>
+                <field type="float" name="value">DEBUG value</field>
+-          </message>
++           </message>
++           <message id="73" name="MISSION_ITEM_INT">
++                <description>Message encoding a mission item with integer coordinates.</description>
++                <field type="uint8_t" name="target_system">System ID</field>
++                <field type="uint8_t" name="target_component">Component ID</field>
++                <field type="uint16_t" name="seq">Sequence</field>
++                <field type="uint8_t" name="frame">The coordinate system of the MISSION.</field>
++                <field type="uint16_t" name="command">The scheduled action for the MISSION.</field>
++                <field type="uint8_t" name="current">false:0, true:1</field>
++                <field type="uint8_t" name="autocontinue">autocontinue to next wp</field>
++                <field type="float" name="param1">PARAM1 / For NAV command MISSIONs: Radius in which the MISSION is accepted as reached, in meters</field>
++                <field type="float" name="param2">PARAM2 / For NAV command MISSIONs: Time that the MAV should stay inside the PARAM1 radius before advancing, in milliseconds</field>
++                <field type="float" name="param3">PARAM3 / For LOITER command MISSIONs: Orbit to circle around the MISSION, in meters.</field>
++                <field type="float" name="param4">PARAM4 / For NAV and LOITER command MISSIONs: Yaw orientation in degrees, [0..360] 0 = NORTH</field>
++                <field type="int32_t" name="x">latitude</field>
++                <field type="int32_t" name="y">longitude</field>
++                <field type="float" name="z">altitude</field>
++           </message>
++           <message id="51" name="MISSION_REQUEST_INT">
++                <description>Request the information of the mission item with the sequence number seq.</description>
++                <field type="uint8_t" name="target_system">System ID</field>
++                <field type="uint8_t" name="target_component">Component ID</field>
++                <field type="uint16_t" name="seq">Sequence</field>
++           </message>
+      </messages>
+ </mavlink>
