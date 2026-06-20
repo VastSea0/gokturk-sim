@@ -16,6 +16,7 @@
   "main": "server.js",
   "scripts": {
     "dev": "vite",
+    "build": "vite build",
     "server": "node server.js",
     "server:mock": "node server.js --mock",
     "start": "concurrently \"npm run server:mock\" \"npm run dev\"",

@@ -130,6 +130,9 @@ const unsubscribe = window.gokturkPayloadCamera.onFrame(({ getImageData, state }
 
 // Save or upload an encoded frame.
 const pngBlob = await window.gokturkPayloadCamera.captureBlob();
+
+// Reuse the same sensor on a future fixed-wing UAV model.
+window.gokturkPayloadCamera.attachTo(fixedWingGroup, new THREE.Vector3(0, -0.3, 0.1));
 ```
 
 ### Telemetry JSON format (WS :8080)

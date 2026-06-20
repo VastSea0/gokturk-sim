@@ -591,12 +591,24 @@ payloadGimbalTiltGroup.add(gimbalGlass);
 // ─── Payload Camera Simulation & Frame API ──────────────────────────────────
 
 class PayloadCameraSystem {
-  constructor(camera3d, sharedRenderer, renderTarget, cameraCanvas, canvasContext) {
+  constructor(
+    camera3d,
+    sharedRenderer,
+    renderTarget,
+    cameraCanvas,
+    canvasContext,
+    carrier,
+    mountPoint,
+    visualMount
+  ) {
     this.camera = camera3d;
     this.renderer = sharedRenderer;
     this.renderTarget = renderTarget;
     this.canvas = cameraCanvas;
     this.canvasContext = canvasContext;
+    this.carrier = carrier;
+    this.mountPoint = mountPoint.clone();
+    this.visualMount = visualMount;
     this.enabled = true;
     this.stabilized = true;
     this.panDeg = 0;
@@ -616,6 +628,21 @@ class PayloadCameraSystem {
     this._panQuaternion = new THREE.Quaternion();
     this._tiltQuaternion = new THREE.Quaternion();
     this._worldQuaternion = new THREE.Quaternion();
+    this._carrierWorldQuaternion = new THREE.Quaternion();
+    this._carrierEuler = new THREE.Euler(0, 0, 0, 'YXZ');
+  }
+
+  attachTo(carrier, mountPoint = this.mountPoint) {
+    if (!(carrier instanceof THREE.Object3D)) {
+      throw new TypeError('Payload camera carrier must be a THREE.Object3D.');
+    }
+    this.carrier = carrier;
+    this.mountPoint.copy(mountPoint);
+    if (this.visualMount) {
+      this.visualMount.removeFromParent();
+      this.visualMount.position.copy(this.mountPoint);
+      carrier.add(this.visualMount);
+    }
   }
 
   setEnabled(enabled) {
@@ -641,10 +668,11 @@ class PayloadCameraSystem {
   }
 
   updatePose() {
-    droneGroup.updateWorldMatrix(true, false);
-    this._mountWorldPosition.copy(payloadMountPoint);
-    droneGroup.localToWorld(this._mountWorldPosition);
+    this.carrier.updateWorldMatrix(true, false);
+    this._mountWorldPosition.copy(this.mountPoint);
+    this.carrier.localToWorld(this._mountWorldPosition);
     this.camera.position.copy(this._mountWorldPosition);
+    this.carrier.getWorldQuaternion(this._carrierWorldQuaternion);
 
     this._panQuaternion.setFromAxisAngle(
       new THREE.Vector3(0, 1, 0),
@@ -656,14 +684,18 @@ class PayloadCameraSystem {
     );
 
     if (this.stabilized) {
-      this._yawQuaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), -smoothYaw);
+      this._carrierEuler.setFromQuaternion(this._carrierWorldQuaternion, 'YXZ');
+      this._yawQuaternion.setFromAxisAngle(
+        new THREE.Vector3(0, 1, 0),
+        this._carrierEuler.y
+      );
       this._worldQuaternion
         .copy(this._yawQuaternion)
         .multiply(this._panQuaternion)
         .multiply(this._tiltQuaternion);
     } else {
       this._worldQuaternion
-        .copy(droneGroup.quaternion)
+        .copy(this._carrierWorldQuaternion)
         .multiply(this._panQuaternion)
         .multiply(this._tiltQuaternion);
     }
@@ -679,10 +711,10 @@ class PayloadCameraSystem {
     this.updatePose();
 
     // The sensor must not render its own carrier or gimbal housing.
-    const droneWasVisible = droneGroup.visible;
+    const carrierWasVisible = this.carrier.visible;
     const shadowAutoUpdate = this.renderer.shadowMap.autoUpdate;
     try {
-      droneGroup.visible = false;
+      this.carrier.visible = false;
       this.renderer.shadowMap.autoUpdate = false;
       this.renderer.setRenderTarget(this.renderTarget);
       this.renderer.clear();
@@ -699,7 +731,7 @@ class PayloadCameraSystem {
     } finally {
       this.renderer.setRenderTarget(null);
       this.renderer.shadowMap.autoUpdate = shadowAutoUpdate;
-      droneGroup.visible = droneWasVisible;
+      this.carrier.visible = carrierWasVisible;
     }
 
     this._notifyFrameListeners(timeSeconds);
@@ -789,7 +821,10 @@ const payloadCameraSystem = new PayloadCameraSystem(
   renderer,
   payloadRenderTarget,
   payloadCanvas,
-  payloadCanvasContext
+  payloadCanvasContext,
+  droneGroup,
+  payloadMountPoint,
+  payloadGimbalPanGroup
 );
 window.gokturkPayloadCamera = payloadCameraSystem;
 
