@@ -335,12 +335,33 @@ class TileManager {
         const u = ix / segs;
         const v = iy / segs;
 
-        // Map to terrain tile pixel coordinates
-        const px = Math.min(Math.floor((uStart + u * subFrac) * tw), tw - 1);
-        const py = Math.min(Math.floor((vStart + v * subFrac) * th), th - 1);
-        const hi = py * tw + px;
+        // Float coordinates in heightmap coordinates [0..tw-1] and [0..th-1]
+        const tu = uStart + u * subFrac;
+        const tv = vStart + v * subFrac;
 
-        const elevation = (heights[hi] || 0) - (this._refElevation || 0);
+        const fx = tu * (tw - 1);
+        const fy = tv * (th - 1);
+
+        const x0 = Math.floor(fx);
+        const y0 = Math.floor(fy);
+        const x1 = Math.min(x0 + 1, tw - 1);
+        const y1 = Math.min(y0 + 1, th - 1);
+
+        const tx = fx - x0;
+        const ty = fy - y0;
+
+        const h00 = heights[y0 * tw + x0] || 0;
+        const h10 = heights[y0 * tw + x1] || 0;
+        const h01 = heights[y1 * tw + x0] || 0;
+        const h11 = heights[y1 * tw + x1] || 0;
+
+        // Bilinear interpolation
+        const heightVal = h00 * (1 - tx) * (1 - ty) +
+                          h10 * tx * (1 - ty) +
+                          h01 * (1 - tx) * ty +
+                          h11 * tx * ty;
+
+        const elevation = heightVal - (this._refElevation || 0);
 
         // Displace Z (becomes Y after -90° X rotation)
         pos.setZ(idx, elevation * this.exaggeration);
@@ -383,12 +404,33 @@ class TileManager {
     const uStart = subX * subFrac;
     const vStart = subY * subFrac;
 
-    // Look up pixel elevation
-    const px = Math.min(Math.floor((uStart + u * subFrac) * tw), tw - 1);
-    const py = Math.min(Math.floor((vStart + v * subFrac) * th), th - 1);
-    const hi = py * tw + px;
+    // Float coordinates in heightmap coordinates [0..tw-1] and [0..th-1]
+    const tu = uStart + u * subFrac;
+    const tv = vStart + v * subFrac;
 
-    const elevation = (heights[hi] || 0) - (this._refElevation || 0);
+    const fx = tu * (tw - 1);
+    const fy = tv * (th - 1);
+
+    const x0 = Math.floor(fx);
+    const y0 = Math.floor(fy);
+    const x1 = Math.min(x0 + 1, tw - 1);
+    const y1 = Math.min(y0 + 1, th - 1);
+
+    const txW = fx - x0;
+    const tyW = fy - y0;
+
+    const h00 = heights[y0 * tw + x0] || 0;
+    const h10 = heights[y0 * tw + x1] || 0;
+    const h01 = heights[y1 * tw + x0] || 0;
+    const h11 = heights[y1 * tw + x1] || 0;
+
+    // Bilinear interpolation
+    const heightVal = h00 * (1 - txW) * (1 - tyW) +
+                      h10 * txW * (1 - tyW) +
+                      h01 * (1 - txW) * tyW +
+                      h11 * txW * tyW;
+
+    const elevation = heightVal - (this._refElevation || 0);
     return elevation * this.exaggeration;
   }
 
