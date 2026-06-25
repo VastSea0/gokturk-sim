@@ -85,7 +85,7 @@ html, body {
   background: linear-gradient(180deg, rgba(8,12,18,0.95) 0%, rgba(8,12,18,0) 100%);
   border-bottom: 1px solid var(--glass-border);
   backdrop-filter: blur(12px);
-  z-index: 100;
+  z-index: 1000;
 }
 
 #logo {
@@ -288,30 +288,7 @@ html, body {
 
 /* ── Sidebars (Scrollable column layouts) ────────────────────────────────── */
 .sidebar {
-  width: 230px;
-  max-height: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: var(--panel-gap);
-  pointer-events: auto;
-  overflow-y: auto;
-  overflow-x: hidden;
-  padding-right: 4px;
-}
-
-/* Hide scrollbars until hovered for clean aesthetics */
-.sidebar::-webkit-scrollbar {
-  width: 4px;
-}
-.sidebar::-webkit-scrollbar-track {
-  background: transparent;
-}
-.sidebar::-webkit-scrollbar-thumb {
-  background: transparent;
-  border-radius: 2px;
-}
-.sidebar:hover::-webkit-scrollbar-thumb {
-  background: var(--text-muted);
+  display: contents;
 }
 
 /* ── HUD Panel (glassmorphism card) ──────────────────────────────────────── */
@@ -322,9 +299,12 @@ html, body {
   backdrop-filter: blur(var(--glass-blur));
   padding: 12px 14px;
   transition: border-color 0.3s;
-  position: relative;
+  position: absolute;
+  width: 230px;
+  z-index: 50;
   overflow: hidden;
   flex-shrink: 0; /* Prevent panel shrinking */
+  pointer-events: auto;
 }
 
 /* Left accent bar on left panels */
@@ -1151,7 +1131,7 @@ body::after {
   color: #fff;
   font-weight: 600;
   font-size: 11px;
-  z-index: 150;
+  z-index: 2000;
   backdrop-filter: blur(8px);
   box-shadow: 0 4px 20px rgba(239, 68, 68, 0.4);
   pointer-events: auto;
@@ -1165,4 +1145,109 @@ body::after {
   border-radius: var(--radius-sm);
   font-family: var(--font-mono);
   text-transform: none;
+}
+
+/* ── Initial Floating Panel Coordinates ── */
+#panel-attitude { left: 12px; top: 64px; }
+#panel-battery { left: 12px; top: 280px; }
+#panel-sim { left: 12px; top: 440px; }
+
+#panel-position { right: 12px; top: 64px; }
+#panel-flight { right: 12px; top: 240px; }
+#panel-runway { right: 12px; top: 440px; }
+#panel-map { right: 12px; top: 700px; }
+
+/* ── Grab Cursor handles ── */
+.panel-title {
+  cursor: grab;
+  user-select: none;
+}
+.panel-title:active {
+  cursor: grabbing;
+}
+.payload-camera-header {
+  cursor: grab;
+  user-select: none;
+}
+.payload-camera-header:active {
+  cursor: grabbing;
+}
+
+/* ── Panel Close Button ── */
+.panel-close-btn {
+  position: absolute;
+  right: 8px;
+  top: 6px;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 0.2s, transform 0.2s;
+  z-index: 10;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+}
+.panel-close-btn:hover {
+  color: var(--color-red);
+  transform: scale(1.15);
+}
+.panel-close-btn:active {
+  transform: scale(0.9);
+}
+
+/* ── Panel Quick Toggles (Header) ── */
+#panel-toggles {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 24px;
+  margin-right: auto;
+  pointer-events: auto;
+}
+
+.toggles-label {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--text-muted);
+  margin-right: 4px;
+}
+
+.toggle-badge {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-family: var(--font-ui);
+  font-size: 9px;
+  font-weight: 600;
+  padding: 3px 8px;
+  cursor: pointer;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.toggle-badge:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(245, 158, 11, 0.3);
+  color: var(--text-secondary);
+}
+
+.toggle-badge.active {
+  background: rgba(34, 211, 238, 0.12);
+  border-color: rgba(34, 211, 238, 0.4);
+  color: #22d3ee;
+  box-shadow: 0 0 8px rgba(34, 211, 238, 0.15);
+}
+
+.toggle-badge.active:hover {
+  background: rgba(34, 211, 238, 0.2);
+  border-color: #22d3ee;
+  color: #ffffff;
+  box-shadow: 0 0 12px rgba(34, 211, 238, 0.3);
 }

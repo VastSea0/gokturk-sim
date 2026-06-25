@@ -2301,4 +2301,172 @@ function animate() {
   payloadCameraSystem.render(timer.getElapsed());
 }
 
+// ─── Floating & Draggable Panels Logic ───
+function initDraggablePanels() {
+  const panels = [
+    document.getElementById('panel-attitude'),
+    document.getElementById('panel-battery'),
+    document.getElementById('panel-sim'),
+    document.getElementById('panel-position'),
+    document.getElementById('panel-flight'),
+    document.getElementById('panel-runway'),
+    document.getElementById('panel-map'),
+    document.getElementById('payload-camera-panel')
+  ];
+
+  let topZIndex = 100;
+
+  panels.forEach(panel => {
+    if (!panel) return;
+
+    let handle = panel.querySelector('.panel-title');
+    if (!handle) {
+      handle = panel.querySelector('.payload-camera-header');
+    }
+    if (!handle) {
+      handle = panel;
+    }
+
+    const bringToFront = () => {
+      topZIndex++;
+      if (topZIndex >= 990) {
+        panels.forEach(p => {
+          if (p) p.style.zIndex = 50;
+        });
+        topZIndex = 100;
+      }
+      panel.style.zIndex = topZIndex;
+    };
+
+    panel.addEventListener('mousedown', bringToFront);
+    panel.addEventListener('touchstart', bringToFront, { passive: true });
+
+    makeElementDraggable(panel, handle);
+  });
+
+  function makeElementDraggable(element, handle) {
+    let pos1 = 0, pos2 = 0, pos3 = 0, pos4 = 0;
+
+    handle.addEventListener('mousedown', dragMouseDown);
+    handle.addEventListener('touchstart', dragTouchStart, { passive: false });
+
+    function dragMouseDown(e) {
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'BUTTON' || e.target.closest('label')) {
+        return;
+      }
+      e.preventDefault();
+      pos3 = e.clientX;
+      pos4 = e.clientY;
+      document.addEventListener('mouseup', closeDragElement);
+      document.addEventListener('mousemove', elementDrag);
+    }
+
+    function elementDrag(e) {
+      e.preventDefault();
+      pos1 = pos3 - e.clientX;
+      pos2 = pos4 - e.clientY;
+      pos3 = e.clientX;
+      pos4 = e.clientY;
+
+      let newTop = element.offsetTop - pos2;
+      let newLeft = element.offsetLeft - pos1;
+
+      const maxLeft = window.innerWidth - element.offsetWidth;
+      const maxTop = window.innerHeight - element.offsetHeight;
+
+      newLeft = Math.max(0, Math.min(newLeft, maxLeft));
+      newTop = Math.max(52, Math.min(newTop, maxTop));
+
+      element.style.top = newTop + 'px';
+      element.style.left = newLeft + 'px';
+      element.style.right = 'auto';
+      element.style.bottom = 'auto';
+    }
+
+    function closeDragElement() {
+      document.removeEventListener('mouseup', closeDragElement);
+      document.removeEventListener('mousemove', elementDrag);
+    }
+
+    function dragTouchStart(e) {
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'BUTTON' || e.target.closest('label')) {
+        return;
+      }
+      const touch = e.touches[0];
+      pos3 = touch.clientX;
+      pos4 = touch.clientY;
+      
+      const touchMoveHandler = (moveEvt) => {
+        const moveTouch = moveEvt.touches[0];
+        pos1 = pos3 - moveTouch.clientX;
+        pos2 = pos4 - moveTouch.clientY;
+        pos3 = moveTouch.clientX;
+        pos4 = moveTouch.clientY;
+
+        let newTop = element.offsetTop - pos2;
+        let newLeft = element.offsetLeft - pos1;
+
+        const maxLeft = window.innerWidth - element.offsetWidth;
+        const maxTop = window.innerHeight - element.offsetHeight;
+
+        newLeft = Math.max(0, Math.min(newLeft, maxLeft));
+        newTop = Math.max(52, Math.min(newTop, maxTop));
+
+        element.style.top = newTop + 'px';
+        element.style.left = newLeft + 'px';
+        element.style.right = 'auto';
+        element.style.bottom = 'auto';
+      };
+
+      const touchEndHandler = () => {
+        document.removeEventListener('touchmove', touchMoveHandler);
+        document.removeEventListener('touchend', touchEndHandler);
+      };
+
+      document.addEventListener('touchmove', touchMoveHandler, { passive: false });
+      document.addEventListener('touchend', touchEndHandler);
+    }
+  }
+}
+
+// ─── Toggling Panel Open/Close Logic ───
+function initPanelToggles() {
+  const toggleBadges = document.querySelectorAll('.toggle-badge');
+  const closeButtons = document.querySelectorAll('.panel-close-btn');
+
+  toggleBadges.forEach(badge => {
+    badge.addEventListener('click', () => {
+      const targetId = badge.getAttribute('data-target');
+      const panel = document.getElementById(targetId);
+      if (!panel) return;
+
+      const isActive = badge.classList.toggle('active');
+      if (isActive) {
+        panel.style.display = targetId === 'payload-camera-panel' ? 'flex' : 'block';
+      } else {
+        panel.style.display = 'none';
+      }
+    });
+  });
+
+  closeButtons.forEach(button => {
+    button.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const targetId = button.getAttribute('data-target');
+      const panel = document.getElementById(targetId);
+      if (panel) {
+        panel.style.display = 'none';
+      }
+
+      const targetBadge = document.querySelector(`.toggle-badge[data-target="${targetId}"]`);
+      if (targetBadge) {
+        targetBadge.classList.remove('active');
+      }
+    });
+  });
+}
+
+initDraggablePanels();
+initPanelToggles();
+
 animate();
