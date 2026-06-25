@@ -344,7 +344,19 @@
               <option value="thermal">THERMAL</option>
             </select>
           </label>
+        </div>
+        <div class="payload-camera-buttons">
           <button id="payload-capture" class="btn-action payload-capture-button">CAPTURE PNG</button>
+          <div class="record-group">
+            <select id="payload-timelapse-speed" class="map-select" title="Timelapse Speed">
+              <option value="5">5x</option>
+              <option value="10" selected>10x</option>
+              <option value="20">20x</option>
+              <option value="30">30x</option>
+              <option value="60">60x</option>
+            </select>
+            <button id="payload-record" class="btn-action payload-record-button">REC TIMELAPSE</button>
+          </div>
         </div>
         <div class="payload-control-slider" id="vision-motion-controls" hidden>
           <div class="slider-header">

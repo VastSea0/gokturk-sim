@@ -1571,6 +1571,15 @@ function initPayloadCameraControls() {
   const fpsLabel = document.getElementById('payload-camera-fps-label');
   const visionLabel = document.getElementById('payload-vision-label');
 
+  const recordButton = document.getElementById('payload-record');
+  const timelapseSpeedInput = document.getElementById('payload-timelapse-speed');
+  const recOsdLabel = document.getElementById('payload-camera-rec');
+
+  let isRecording = false;
+  let recordedFrames = [];
+  let isEncoding = false;
+  let unsubscribeTimelapse = null;
+
   const updateVisionLabel = () => {
     const summary = payloadCameraSystem.getVisionSummary();
     const modeText = summary.mode.toUpperCase();
@@ -1601,6 +1610,17 @@ function initPayloadCameraControls() {
     stateLabel.textContent = event.target.checked ? 'LIVE' : 'OFF';
     stateLabel.style.color = event.target.checked ? 'var(--color-green)' : 'var(--color-red)';
     offlineOverlay.style.display = event.target.checked ? 'none' : 'flex';
+
+    if (!event.target.checked) {
+      if (isRecording) {
+        stopRecording();
+      }
+      recordButton.disabled = true;
+    } else {
+      if (!isEncoding) {
+        recordButton.disabled = false;
+      }
+    }
   });
 
   stabilizedInput.addEventListener('change', (event) => {
@@ -1662,6 +1682,151 @@ function initPayloadCameraControls() {
       }, 1400);
     }
   });
+
+  const startRecording = () => {
+    if (!payloadCameraSystem.enabled) {
+      alert('Kayıt yapabilmek için kameranın açık (LIVE) olması gerekir.');
+      return;
+    }
+    isRecording = true;
+    recordedFrames = [];
+    timelapseSpeedInput.disabled = true;
+    recordButton.classList.add('recording');
+    recordButton.textContent = 'STOP (0f)';
+    
+    recOsdLabel.classList.add('recording');
+    const speedVal = timelapseSpeedInput.value;
+    recOsdLabel.textContent = `● REC ${speedVal}X`;
+    
+    const speed = Number(speedVal) || 10;
+    const captureFps = 30 / speed;
+    
+    unsubscribeTimelapse = payloadCameraSystem.onFrame(({ canvas }) => {
+      if (!isRecording) return;
+      
+      const offscreen = document.createElement('canvas');
+      offscreen.width = canvas.width;
+      offscreen.height = canvas.height;
+      const ctx = offscreen.getContext('2d');
+      ctx.drawImage(canvas, 0, 0);
+      
+      offscreen.toBlob((blob) => {
+        if (isRecording && blob) {
+          recordedFrames.push(blob);
+          recordButton.textContent = `STOP (${recordedFrames.length}f)`;
+        }
+      }, 'image/jpeg', 0.85);
+    }, { fps: captureFps });
+  };
+
+  const stopRecording = () => {
+    if (!isRecording) return;
+    isRecording = false;
+    
+    if (unsubscribeTimelapse) {
+      unsubscribeTimelapse();
+      unsubscribeTimelapse = null;
+    }
+    
+    recordButton.classList.remove('recording');
+    recOsdLabel.classList.remove('recording');
+    recOsdLabel.textContent = '● EO';
+    
+    if (recordedFrames.length === 0) {
+      timelapseSpeedInput.disabled = false;
+      recordButton.textContent = 'REC TIMELAPSE';
+      return;
+    }
+    
+    isEncoding = true;
+    recordButton.disabled = true;
+    recordButton.textContent = 'ENC 0%';
+    
+    const hiddenCanvas = document.createElement('canvas');
+    hiddenCanvas.width = 640;
+    hiddenCanvas.height = 360;
+    const hiddenCtx = hiddenCanvas.getContext('2d');
+    
+    const stream = hiddenCanvas.captureStream(30);
+    
+    let mimeType = 'video/mp4';
+    if (!MediaRecorder.isTypeSupported(mimeType)) {
+      mimeType = 'video/webm; codecs=vp9';
+    }
+    if (!MediaRecorder.isTypeSupported(mimeType)) {
+      mimeType = 'video/webm';
+    }
+    
+    const chunks = [];
+    const recorder = new MediaRecorder(stream, { mimeType });
+    
+    recorder.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) {
+        chunks.push(e.data);
+      }
+    };
+    
+    recorder.onstop = () => {
+      const blob = new Blob(chunks, { type: mimeType });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      const ext = mimeType.includes('mp4') ? 'mp4' : 'webm';
+      link.download = `gokturk-timelapse-${new Date().toISOString().replace(/[:.]/g, '-')}.${ext}`;
+      link.click();
+      URL.revokeObjectURL(url);
+      
+      isEncoding = false;
+      recordButton.disabled = false;
+      timelapseSpeedInput.disabled = false;
+      recordButton.textContent = 'REC TIMELAPSE';
+    };
+    
+    recorder.start();
+    
+    let frameIndex = 0;
+    
+    const drawNextFrame = () => {
+      if (frameIndex >= recordedFrames.length) {
+        setTimeout(() => {
+          recorder.stop();
+        }, 150);
+        return;
+      }
+      
+      const imgBlob = recordedFrames[frameIndex];
+      const img = new Image();
+      img.src = URL.createObjectURL(imgBlob);
+      img.onload = () => {
+        hiddenCtx.clearRect(0, 0, 640, 360);
+        hiddenCtx.drawImage(img, 0, 0);
+        URL.revokeObjectURL(img.src);
+        
+        const progress = Math.round((frameIndex / recordedFrames.length) * 100);
+        recordButton.textContent = `ENC ${progress}%`;
+        
+        frameIndex++;
+        setTimeout(drawNextFrame, 1000 / 30);
+      };
+      img.onerror = () => {
+        console.error('[TIMELAPSE] Failed to load frame during encoding:', frameIndex);
+        frameIndex++;
+        setTimeout(drawNextFrame, 0);
+      };
+    };
+    
+    drawNextFrame();
+  };
+
+  recordButton.addEventListener('click', () => {
+    if (isRecording) {
+      stopRecording();
+    } else {
+      startRecording();
+    }
+  });
+
+  recordButton.disabled = !enabledInput.checked;
 
   updateLabels();
 }

@@ -894,6 +894,60 @@ body::after {
   height: 27px;
 }
 
+.payload-camera-buttons {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 1fr 1.2fr;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.record-group {
+  display: flex;
+  gap: 4px;
+}
+
+.record-group .map-select {
+  width: 48px;
+  height: 27px;
+  flex-shrink: 0;
+  font-size: 9px;
+  padding: 0 2px;
+}
+
+.payload-record-button {
+  height: 27px;
+  flex-grow: 1;
+}
+
+.payload-record-button.recording {
+  background: rgba(239, 68, 68, 0.25) !important;
+  border-color: rgba(239, 68, 68, 0.6) !important;
+  color: #fca5a5 !important;
+  animation: record-pulse 1.5s infinite alternate;
+}
+
+@keyframes record-pulse {
+  from {
+    box-shadow: 0 0 4px rgba(239, 68, 68, 0.2);
+  }
+  to {
+    box-shadow: 0 0 12px rgba(239, 68, 68, 0.6);
+    border-color: #ef4444;
+  }
+}
+
+#payload-camera-rec.recording {
+  color: #ef4444 !important;
+  animation: rec-blink 1s steps(2, start) infinite;
+}
+
+@keyframes rec-blink {
+  to {
+    visibility: hidden;
+  }
+}
+
 @media (max-width: 1180px) {
   #payload-camera-panel {
     right: 12px;
