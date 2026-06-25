@@ -263,9 +263,22 @@ class TileManager {
     const ttx = Math.floor(tx / scale);
     const tty = Math.floor(ty / scale);
     const cacheKey = `${tz}/${ttx}/${tty}`;
+    const subX = tx % scale;
+    const subY = ty % scale;
+
+    const wrapResult = (tileData) => {
+      return {
+        heights: tileData.heights,
+        width: tileData.width,
+        height: tileData.height,
+        scale,
+        subX,
+        subY
+      };
+    };
 
     if (this._terrainCache.has(cacheKey)) {
-      return Promise.resolve(this._terrainCache.get(cacheKey));
+      return Promise.resolve(wrapResult(this._terrainCache.get(cacheKey)));
     }
 
     const url = this._terrainTileUrl(tz, ttx, tty);
@@ -297,14 +310,14 @@ class TileManager {
           console.log(`[Terrain] Reference elevation: ${this._refElevation.toFixed(1)}m ASL`);
         }
 
-        const result = { heights, width: size, height: size, scale, subX: tx % scale, subY: ty % scale };
-        this._terrainCache.set(cacheKey, result);
-        resolve(result);
+        const tileData = { heights, width: size, height: size };
+        this._terrainCache.set(cacheKey, tileData);
+        resolve(wrapResult(tileData));
       };
       img.onerror = () => {
         // Return flat heights on error
-        const fallback = { heights: new Float32Array(256 * 256), width: 256, height: 256, scale: 1, subX: 0, subY: 0 };
-        resolve(fallback);
+        const fallback = { heights: new Float32Array(256 * 256), width: 256, height: 256 };
+        resolve(wrapResult(fallback));
       };
       img.src = url;
     });
@@ -399,7 +412,9 @@ class TileManager {
     const terrainData = this._terrainCache.get(cacheKey);
     if (!terrainData) return 0;
 
-    const { heights, width: tw, height: th, subX, subY } = terrainData;
+    const { heights, width: tw, height: th } = terrainData;
+    const subX = tx % scale;
+    const subY = ty % scale;
     const subFrac = 1 / scale;
     const uStart = subX * subFrac;
     const vStart = subY * subFrac;
