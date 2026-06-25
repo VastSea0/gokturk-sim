@@ -270,6 +270,18 @@
             <span class="control-label">Follow UAV</span>
             <input type="checkbox" id="camera-follow" checked />
           </label>
+          <label class="control-row">
+            <span class="control-label">Sandbox Mode</span>
+            <input type="checkbox" id="sandbox-mode" />
+          </label>
+          <!-- Sandbox Speed Slider -->
+          <div class="control-slider-group" id="sandbox-speed-group" style="display: none; margin-top: 8px;">
+            <div class="slider-header">
+              <span class="control-label">Cam Move Speed</span>
+              <span class="slider-value" id="val-sandbox-speed">50 m/s</span>
+            </div>
+            <input type="range" id="sandbox-speed" min="10" max="250" step="5" value="50" />
+          </div>
           <div class="control-row">
             <span class="control-label">Provider</span>
             <select id="map-provider" class="map-select">

@@ -1817,6 +1817,56 @@ function initMapControls() {
     });
   }
 
+  const elSandbox = document.getElementById('sandbox-mode');
+  if (elSandbox) {
+    elSandbox.addEventListener('change', (e) => {
+      sandboxModeActive = e.target.checked;
+      
+      const elFollowCheck = document.getElementById('camera-follow');
+      const elSpeedGroup = document.getElementById('sandbox-speed-group');
+      if (sandboxModeActive) {
+        preSandboxFollowState = cameraFollow;
+        cameraFollow = false;
+        if (elFollowCheck) {
+          elFollowCheck.checked = false;
+          elFollowCheck.disabled = true;
+        }
+        if (elSpeedGroup) elSpeedGroup.style.display = 'block';
+      } else {
+        cameraFollow = preSandboxFollowState;
+        if (elFollowCheck) {
+          elFollowCheck.checked = cameraFollow;
+          elFollowCheck.disabled = false;
+        }
+        if (elSpeedGroup) elSpeedGroup.style.display = 'none';
+      }
+      
+      // Update visibility of aircraft, shadows, trails, and routes
+      const visible = !sandboxModeActive;
+      if (droneGroup) droneGroup.visible = visible;
+      if (shadowBlob) shadowBlob.visible = visible;
+      if (routeGroup) routeGroup.visible = visible;
+      if (trailLine) trailLine.visible = visible;
+      if (trailCurtain) trailCurtain.visible = visible;
+
+      // Force immediate reload of tiles around current camera focus
+      if (tileManager) {
+        tileManager.lastCx = null;
+        tileManager.lastCy = null;
+      }
+    });
+  }
+
+  const elSandboxSpeed = document.getElementById('sandbox-speed');
+  const elSandboxSpeedVal = document.getElementById('val-sandbox-speed');
+  if (elSandboxSpeed) {
+    elSandboxSpeed.addEventListener('input', (e) => {
+      const val = parseFloat(e.target.value);
+      sandboxMoveSpeed = val;
+      if (elSandboxSpeedVal) elSandboxSpeedVal.textContent = `${val} m/s`;
+    });
+  }
+
   // ── Terrain Mode ──
   const elTerrainMode = document.getElementById('map-terrain-mode');
   const elExaggerationGroup = document.getElementById('terrain-exaggeration-group');
@@ -2141,6 +2191,27 @@ function initPayloadCameraControls() {
 let smoothRoll = 0, smoothPitch = 0, smoothYaw = 0, smoothAlt = 10;
 let homeLat = null, homeLon = null;
 let cameraFollow = true;
+let sandboxModeActive = false;
+let preSandboxFollowState = true;
+let sandboxMoveSpeed = 50;
+const keysPressed = {};
+
+// ─── Keyboard state tracking for Sandbox Mode ───────────────────────────────
+window.addEventListener('keydown', (e) => {
+  const key = e.key.toLowerCase();
+  if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' ', 'shift'].includes(key)) {
+    keysPressed[key] = true;
+    if (document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'SELECT') {
+      e.preventDefault();
+    }
+  }
+});
+window.addEventListener('keyup', (e) => {
+  const key = e.key.toLowerCase();
+  if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' ', 'shift'].includes(key)) {
+    keysPressed[key] = false;
+  }
+});
 // tilesLoaded replaced by tileManager !== null check
 
 // ─── WebSocket Client ─────────────────────────────────────────────────────────
@@ -2508,6 +2579,34 @@ function animate() {
   const delta = timer.getDelta();
   trailTimer += delta;
 
+  // ── Sandbox Mode keyboard translation ──────────────────────────────────
+  if (sandboxModeActive) {
+    const forward = new THREE.Vector3();
+    camera.getWorldDirection(forward);
+    forward.y = 0;
+    forward.normalize();
+
+    const right = new THREE.Vector3();
+    right.crossVectors(forward, camera.up);
+    right.y = 0;
+    right.normalize();
+
+    const moveDir = new THREE.Vector3(0, 0, 0);
+    if (keysPressed['w'] || keysPressed['arrowup']) moveDir.add(forward);
+    if (keysPressed['s'] || keysPressed['arrowdown']) moveDir.addScaledVector(forward, -1);
+    if (keysPressed['d'] || keysPressed['arrowright']) moveDir.add(right);
+    if (keysPressed['a'] || keysPressed['arrowleft']) moveDir.addScaledVector(right, -1);
+    if (keysPressed[' ']) moveDir.add(new THREE.Vector3(0, 1, 0));
+    if (keysPressed['shift']) moveDir.add(new THREE.Vector3(0, -1, 0));
+
+    if (moveDir.lengthSq() > 0) {
+      moveDir.normalize();
+      const dist = sandboxMoveSpeed * delta;
+      camera.position.addScaledVector(moveDir, dist);
+      controls.target.addScaledVector(moveDir, dist);
+    }
+  }
+
   if (lastTelemetry) {
     const t = lastTelemetry;
 
@@ -2532,7 +2631,12 @@ function animate() {
         const exagEl = document.getElementById('terrain-exaggeration');
         if (exagEl) tileManager.setExaggeration(parseFloat(exagEl.value));
       }
-      tileManager.update(t.position.lat, t.position.lon);
+      if (sandboxModeActive && homeLat !== null) {
+        const cameraGeo = worldToGeo(controls.target.x, controls.target.z, homeLat, homeLon);
+        tileManager.update(cameraGeo.lat, cameraGeo.lon);
+      } else {
+        tileManager.update(t.position.lat, t.position.lon);
+      }
     }
 
     // ── Attitude smoothing (NED → Three.js Y-up) ─────────────────────────
