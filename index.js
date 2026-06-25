@@ -105,6 +105,104 @@ const runwaySettings = {
   offsetZ: 0
 };
 
+let competitionFieldGroup = null;
+const competitionFieldSettings = {
+  enabled: false,
+  lat: 37.3920,
+  lon: 36.8525,
+  rotation: 0,
+  gridCols: 6,
+  squareSize: 3,
+  layout: new Array(36).fill(0),
+};
+
+function createCompetitionField() {
+  if (competitionFieldGroup) {
+    scene.remove(competitionFieldGroup);
+    competitionFieldGroup.traverse(child => {
+      if (child.isMesh) {
+        child.geometry.dispose();
+        if (Array.isArray(child.material)) {
+          child.material.forEach(m => m.dispose());
+        } else {
+          child.material.dispose();
+        }
+      }
+    });
+    competitionFieldGroup = null;
+  }
+
+  if (!competitionFieldSettings.enabled || homeLat === null) return;
+
+  competitionFieldGroup = new THREE.Group();
+
+  const cols = competitionFieldSettings.gridCols;
+  const rows = competitionFieldSettings.gridCols;
+  const size = competitionFieldSettings.squareSize;
+
+  const redMat = new THREE.MeshStandardMaterial({
+    color: 0xef4444,
+    roughness: 0.8,
+    metalness: 0.1
+  });
+  
+  const blueMat = new THREE.MeshStandardMaterial({
+    color: 0x3b82f6,
+    roughness: 0.8,
+    metalness: 0.1
+  });
+
+  const borderMat = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    roughness: 0.9,
+    metalness: 0.1
+  });
+
+  const worldPos = geoToWorld(
+    competitionFieldSettings.lat,
+    competitionFieldSettings.lon,
+    homeLat,
+    homeLon
+  );
+
+  const startX = -((cols * size) / 2);
+  const startZ = -((rows * size) / 2);
+
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const idx = r * cols + c;
+      const state = competitionFieldSettings.layout[idx] || 0;
+      if (state === 0) continue; // 0 = Empty
+
+      const geo = new THREE.PlaneGeometry(size - 0.05, size - 0.05);
+      const mat = (state === 1) ? redMat : blueMat; // 1 = Enemy (Red), 2 = Friend (Blue)
+      const mesh = new THREE.Mesh(geo, mat);
+      
+      mesh.rotation.x = -Math.PI / 2;
+      mesh.position.set(
+        startX + c * size + size / 2,
+        0,
+        startZ + r * size + size / 2
+      );
+      mesh.receiveShadow = true;
+      competitionFieldGroup.add(mesh);
+    }
+  }
+
+  const frameMesh = new THREE.Mesh(
+    new THREE.BoxGeometry(cols * size + 0.1, 0.01, rows * size + 0.1),
+    borderMat
+  );
+  frameMesh.position.set(0, -0.01, 0);
+  competitionFieldGroup.add(frameMesh);
+
+  const elevation = tileManager ? tileManager.getElevationAt(competitionFieldSettings.lat, competitionFieldSettings.lon) : 0;
+  competitionFieldGroup.position.set(worldPos.x, elevation + 0.08, worldPos.z);
+  competitionFieldGroup.rotation.y = THREE.MathUtils.degToRad(competitionFieldSettings.rotation);
+
+  scene.add(competitionFieldGroup);
+}
+
 // Satellite tile config — defaults (overridable via UI)
 const DEFAULT_TILE_ZOOM = 17;
 const DEFAULT_TILE_GRID_HALF = 5;     // (2*5+1)=11×11 = 121 tiles
@@ -846,6 +944,7 @@ class PayloadCameraSystem {
     this._carrierWorldQuaternion = new THREE.Quaternion();
     this._carrierEuler = new THREE.Euler(0, 0, 0, 'YXZ');
     this.vision = new VisionProcessor();
+    this._lastStreamTime = 0;
   }
 
   attachTo(carrier, mountPoint = this.mountPoint) {
@@ -944,6 +1043,19 @@ class PayloadCameraSystem {
         this.pixelBuffer
       );
       this._copyFlippedPixelsToCanvas();
+
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        const now = performance.now();
+        if (now - this._lastStreamTime > 50) {
+          this._lastStreamTime = now;
+          const base64 = this.canvas.toDataURL('image/jpeg', 0.65);
+          sendWsCommand({
+            type: 'gimbal_frame',
+            frame: base64
+          });
+        }
+      }
+
       this._applyVisionProcessing();
       this._drawVisionOverlay();
     } finally {
@@ -2033,6 +2145,150 @@ function initMapControls() {
       lastRouteJSON = "";
     });
   }
+
+  // ── Competition Field UI Bindings ──
+  const elCompEnabled = document.getElementById('comp-field-enabled');
+  const elCompLat = document.getElementById('comp-field-lat');
+  const elCompLatVal = document.getElementById('val-comp-field-lat');
+  const elCompLon = document.getElementById('comp-field-lon');
+  const elCompLonVal = document.getElementById('val-comp-field-lon');
+  const elCompRot = document.getElementById('comp-field-rot');
+  const elCompRotVal = document.getElementById('val-comp-field-rot');
+  const elCompCols = document.getElementById('comp-field-cols');
+  const elCompColsVal = document.getElementById('val-comp-field-cols');
+  const elCompSize = document.getElementById('comp-field-size');
+  const elCompSizeVal = document.getElementById('val-comp-field-size');
+  const elCompSpawnBtn = document.getElementById('btn-comp-field-spawn-here');
+
+  function syncCompField() {
+    if (elCompEnabled) competitionFieldSettings.enabled = elCompEnabled.checked;
+    if (elCompLat) {
+      competitionFieldSettings.lat = parseFloat(elCompLat.value);
+      if (elCompLatVal) elCompLatVal.textContent = competitionFieldSettings.lat.toFixed(4);
+    }
+    if (elCompLon) {
+      competitionFieldSettings.lon = parseFloat(elCompLon.value);
+      if (elCompLonVal) elCompLonVal.textContent = competitionFieldSettings.lon.toFixed(4);
+    }
+    if (elCompRot) {
+      competitionFieldSettings.rotation = parseInt(elCompRot.value, 10);
+      if (elCompRotVal) elCompRotVal.textContent = `${competitionFieldSettings.rotation}°`;
+    }
+    if (elCompCols) {
+      competitionFieldSettings.gridCols = parseInt(elCompCols.value, 10);
+      if (elCompColsVal) elCompColsVal.textContent = competitionFieldSettings.gridCols;
+    }
+    if (elCompSize) {
+      competitionFieldSettings.squareSize = parseFloat(elCompSize.value);
+      if (elCompSizeVal) elCompSizeVal.textContent = `${competitionFieldSettings.squareSize}m`;
+    }
+    
+    createCompetitionField();
+  }
+
+  if (elCompEnabled) elCompEnabled.addEventListener('change', syncCompField);
+  if (elCompLat) elCompLat.addEventListener('input', syncCompField);
+  if (elCompLon) elCompLon.addEventListener('input', syncCompField);
+  if (elCompRot) elCompRot.addEventListener('input', syncCompField);
+  if (elCompCols) elCompCols.addEventListener('input', syncCompField);
+  if (elCompSize) elCompSize.addEventListener('input', syncCompField);
+
+  if (elCompSpawnBtn) {
+    elCompSpawnBtn.addEventListener('click', () => {
+      if (homeLat === null) {
+        alert('Ev koordinatları (home position) yüklenmeden alan taşınamaz.');
+        return;
+      }
+      const geo = worldToGeo(controls.target.x, controls.target.z, homeLat, homeLon);
+      if (elCompLat) {
+        elCompLat.min = (geo.lat - 0.02).toFixed(4);
+        elCompLat.max = (geo.lat + 0.02).toFixed(4);
+        elCompLat.value = geo.lat.toFixed(6);
+        competitionFieldSettings.lat = geo.lat;
+      }
+      if (elCompLon) {
+        elCompLon.min = (geo.lon - 0.02).toFixed(4);
+        elCompLon.max = (geo.lon + 0.02).toFixed(4);
+        elCompLon.value = geo.lon.toFixed(6);
+        competitionFieldSettings.lon = geo.lon;
+      }
+      if (elCompEnabled) {
+        elCompEnabled.checked = true;
+        competitionFieldSettings.enabled = true;
+      }
+      
+      syncCompField();
+    });
+  }
+
+  // Interactive target grid editor generator
+  const elGridEditor = document.getElementById('comp-field-grid-editor');
+  let lastCols = -1;
+
+  function rebuildGridEditor() {
+    if (!elGridEditor) return;
+    const cols = competitionFieldSettings.gridCols;
+    
+    // Update CSS layout
+    elGridEditor.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+    
+    // Adjust layout array size if dimensions changed
+    const totalCells = cols * cols;
+    if (competitionFieldSettings.layout.length !== totalCells) {
+      const oldLayout = competitionFieldSettings.layout;
+      competitionFieldSettings.layout = new Array(totalCells).fill(0);
+      for (let i = 0; i < Math.min(oldLayout.length, totalCells); i++) {
+        competitionFieldSettings.layout[i] = oldLayout[i] || 0;
+      }
+    }
+    
+    // Render cells
+    elGridEditor.innerHTML = '';
+    for (let idx = 0; idx < totalCells; idx++) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.style.width = '100%';
+      btn.style.aspectRatio = '1';
+      btn.style.border = 'none';
+      btn.style.borderRadius = '4px';
+      btn.style.cursor = 'pointer';
+      btn.style.transition = 'background-color 0.2s';
+      
+      const updateButtonColor = (b, state) => {
+        if (state === 0) {
+          b.style.backgroundColor = 'rgba(255,255,255,0.1)';
+        } else if (state === 1) {
+          b.style.backgroundColor = '#ef4444'; // Red (Enemy)
+        } else if (state === 2) {
+          b.style.backgroundColor = '#3b82f6'; // Blue (Friend)
+        }
+      };
+      
+      updateButtonColor(btn, competitionFieldSettings.layout[idx]);
+      
+      btn.addEventListener('click', () => {
+        const nextState = (competitionFieldSettings.layout[idx] + 1) % 3;
+        competitionFieldSettings.layout[idx] = nextState;
+        updateButtonColor(btn, nextState);
+        createCompetitionField();
+      });
+      
+      elGridEditor.appendChild(btn);
+    }
+  }
+
+  // Hook layout rebuild inside syncCompField wrapper
+  const originalSyncCompField = syncCompField;
+  syncCompField = function() {
+    originalSyncCompField();
+    if (competitionFieldSettings.gridCols !== lastCols) {
+      lastCols = competitionFieldSettings.gridCols;
+      rebuildGridEditor();
+    }
+  };
+
+  // Initialize on page load
+  syncCompField();
 }
 
 function initPayloadCameraControls() {
@@ -2313,6 +2569,65 @@ function initPayloadCameraControls() {
 
   recordButton.disabled = !enabledInput.checked;
 
+  // Camera Python Processor Start/Stop Toggle
+  const toggleBtn = document.getElementById('btn-camera-processor-toggle');
+  const toggleIcon = document.getElementById('icon-camera-processor-toggle');
+  const toggleTxt = document.getElementById('txt-camera-processor-toggle');
+  let isProcessorRunning = false;
+
+  async function updateProcessorStatus(running) {
+    isProcessorRunning = running;
+    if (toggleBtn) {
+      if (running) {
+        toggleBtn.classList.add('active');
+        toggleBtn.style.borderColor = 'var(--md-sys-color-error, #ffb4ab)';
+        toggleBtn.style.background = 'rgba(239, 68, 68, 0.15)';
+        if (toggleIcon) {
+          toggleIcon.textContent = 'stop_circle';
+          toggleIcon.style.color = 'var(--md-sys-color-error, #ffb4ab)';
+        }
+        if (toggleTxt) toggleTxt.textContent = 'Stop OpenCV Engine';
+      } else {
+        toggleBtn.classList.remove('active');
+        toggleBtn.style.borderColor = 'rgba(245,158,11,0.35)';
+        toggleBtn.style.background = 'transparent';
+        if (toggleIcon) {
+          toggleIcon.textContent = 'smart_toy';
+          toggleIcon.style.color = '';
+        }
+        if (toggleTxt) toggleTxt.textContent = 'Start OpenCV Engine';
+      }
+    }
+  }
+
+  if (toggleBtn) {
+    toggleBtn.addEventListener('click', async () => {
+      const endpoint = isProcessorRunning ? '/api/camera/stop' : '/api/camera/start';
+      toggleBtn.disabled = true;
+      try {
+        const response = await fetch(endpoint, { method: 'POST' });
+        const res = await response.json();
+        if (res.status === 'started' || res.status === 'running') {
+          updateProcessorStatus(true);
+        } else {
+          updateProcessorStatus(false);
+        }
+      } catch (err) {
+        console.error('[CAM PROCESS] Toggle failed:', err);
+      } finally {
+        toggleBtn.disabled = false;
+      }
+    });
+
+    // Check status on startup
+    fetch('/api/camera/status')
+      .then(r => r.json())
+      .then(data => updateProcessorStatus(data.running))
+      .catch(e => console.error('[CAM PROCESS] Fetch status failed:', e));
+  }
+
+  window.updateGlobalCameraStatus = updateProcessorStatus;
+
   updateLabels();
 }
 
@@ -2329,6 +2644,182 @@ let sandboxRecordedFrames = [];
 let sandboxRecSpeed = 1;
 let lastFrameCaptureTime = 0;
 let isSandboxEncoding = false;
+
+let localMission = [];
+
+function addWaypoint(wp) {
+  localMission.push(wp);
+  updateMissionUI();
+  
+  if (homeLat !== null) {
+    buildRouteVisuals(localMission, homeLat, homeLon);
+  } else {
+    buildRouteVisuals(localMission, 37.3914, 36.8522);
+  }
+}
+
+function removeWaypoint(index) {
+  localMission.splice(index, 1);
+  localMission.forEach((wp, i) => {
+    wp.seq = i;
+  });
+  updateMissionUI();
+  
+  if (homeLat !== null) {
+    buildRouteVisuals(localMission, homeLat, homeLon);
+  } else {
+    buildRouteVisuals(localMission, 37.3914, 36.8522);
+  }
+}
+
+function updateWaypointAlt(index, alt) {
+  if (localMission[index]) {
+    localMission[index].alt = Number(alt) || 50;
+    if (homeLat !== null) {
+      buildRouteVisuals(localMission, homeLat, homeLon);
+    } else {
+      buildRouteVisuals(localMission, 37.3914, 36.8522);
+    }
+  }
+}
+
+function updateMissionUI() {
+  const container = document.getElementById('mission-waypoint-list');
+  if (!container) return;
+
+  if (localMission.length === 0) {
+    container.innerHTML = `<div style="text-align: center; color: var(--text-muted); font-size: 11px; padding: 20px 0;">No waypoints added yet. Click map to add.</div>`;
+    return;
+  }
+
+  container.innerHTML = '';
+  localMission.forEach((wp, index) => {
+    const div = document.createElement('div');
+    div.style.cssText = 'background: rgba(255,255,255,0.04); padding: 8px 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.08); display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 11px;';
+    div.innerHTML = `
+      <div style="display: flex; flex-direction: column; gap: 2px;">
+        <span style="font-weight: 700; color: #f59e0b;">WP #${wp.seq}</span>
+        <span style="color: var(--text-muted); font-size: 9px; font-family: monospace;">${wp.lat.toFixed(6)}, ${wp.lon.toFixed(6)}</span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <div style="display: flex; align-items: center; gap: 4px;">
+          <input type="number" value="${wp.alt}" min="5" max="500" style="width: 54px; height: 22px; background: rgba(0,0,0,0.6); color: #fff; border: 1px solid rgba(255,255,255,0.2); border-radius: 4px; padding: 0 4px; text-align: center; font-size: 11px;" class="wp-alt-input" data-index="${index}" />
+          <span style="color: var(--text-muted); font-size: 10px;">m</span>
+        </div>
+        <button style="background: none; border: none; color: #ef4444; cursor: pointer; font-size: 16px; font-weight: bold; padding: 0 4px;" class="wp-delete-btn" data-index="${index}">&times;</button>
+      </div>
+    `;
+    container.appendChild(div);
+  });
+
+  container.querySelectorAll('.wp-alt-input').forEach(input => {
+    input.addEventListener('change', (e) => {
+      const idx = parseInt(e.target.dataset.index);
+      updateWaypointAlt(idx, e.target.value);
+    });
+  });
+
+  container.querySelectorAll('.wp-delete-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const idx = parseInt(e.target.dataset.index);
+      removeWaypoint(idx);
+    });
+  });
+}
+
+function downloadQGCPlan() {
+  if (localMission.length === 0) {
+    alert('Planı dışa aktarmak için en az bir waypoint eklemelisiniz.');
+    return;
+  }
+
+  const homeL = homeLat !== null ? homeLat : 37.3914;
+  const homeLo = homeLon !== null ? homeLon : 36.8522;
+  const homeA = 500;
+
+  const items = [];
+  localMission.forEach((wp) => {
+    items.push({
+      "autoContinue": true,
+      "command": wp.command || 16,
+      "frame": 3,
+      "params": [
+        0,
+        0,
+        0,
+        null,
+        wp.lat,
+        wp.lon,
+        wp.alt
+      ],
+      "type": "SimpleItem"
+    });
+  });
+
+  const planData = {
+    "fileType": "Plan",
+    "version": 1,
+    "groundStation": "QGroundControl",
+    "mission": {
+      "plannedHomePosition": [
+        homeL,
+        homeLo,
+        homeA
+      ],
+      "items": items,
+      "vehicleType": 1
+    }
+  };
+
+  const jsonString = JSON.stringify(planData, null, 2);
+  const blob = new Blob([jsonString], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `gokturk-flight-plan-${new Date().toISOString().replace(/[:.]/g, '-')}.plan`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+const raycaster = new THREE.Raycaster();
+const mouse = new THREE.Vector2();
+
+window.addEventListener('click', (e) => {
+  const panelMission = document.getElementById('panel-mission');
+  if (!panelMission || panelMission.style.display === 'none') return;
+  if (e.target.closest('#hud') || e.target.closest('#top-bar') || e.target.closest('#controls-hint')) return;
+  if (e.target !== canvas) return;
+
+  mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+  mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+
+  raycaster.setFromCamera(mouse, camera);
+
+  const terrainMeshes = [];
+  if (tileManager) {
+    for (const entry of tileManager.tiles.values()) {
+      if (entry && entry.mesh && entry.state === 'ready') {
+        terrainMeshes.push(entry.mesh);
+      }
+    }
+  }
+
+  const intersects = raycaster.intersectObjects(terrainMeshes);
+  if (intersects.length > 0) {
+    const point = intersects[0].point;
+    const refLat = homeLat !== null ? homeLat : 37.3914;
+    const refLon = homeLon !== null ? homeLon : 36.8522;
+    const geo = worldToGeo(point.x, point.z, refLat, refLon);
+    
+    addWaypoint({
+      seq: localMission.length,
+      lat: geo.lat,
+      lon: geo.lon,
+      alt: 50,
+      command: 16
+    });
+  }
+});
 
 function startSandboxRecording() {
   if (!sandboxModeActive) return;
@@ -2476,6 +2967,153 @@ window.addEventListener('keyup', (e) => {
 
 // ─── WebSocket Client ─────────────────────────────────────────────────────────
 
+const targetBeacons = new Map();
+
+function createTargetBeaconMesh(colorStr) {
+  const group = new THREE.Group();
+  
+  // Outer ring (for glowing animation)
+  const ringGeo = new THREE.RingGeometry(0.1, 1.5, 32);
+  const ringMat = new THREE.MeshBasicMaterial({
+    color: colorStr === 'red' ? 0xef4444 : 0x3b82f6,
+    side: THREE.DoubleSide,
+    transparent: true,
+    opacity: 0.6
+  });
+  const ring = new THREE.Mesh(ringGeo, ringMat);
+  ring.rotation.x = -Math.PI / 2;
+  group.add(ring);
+  
+  // Vertical column / cylinder representing the beacon beam
+  const cylinderGeo = new THREE.CylinderGeometry(0.05, 0.5, 4, 16, 1, true);
+  const cylinderMat = new THREE.MeshBasicMaterial({
+    color: colorStr === 'red' ? 0xef4444 : 0x3b82f6,
+    transparent: true,
+    opacity: 0.4,
+    side: THREE.DoubleSide
+  });
+  const cylinder = new THREE.Mesh(cylinderGeo, cylinderMat);
+  cylinder.position.y = 2; // half height
+  group.add(cylinder);
+  
+  // Point light to cast soft light on the terrain
+  const light = new THREE.PointLight(colorStr === 'red' ? 0xef4444 : 0x3b82f6, 1.5, 10);
+  light.position.y = 1.0;
+  group.add(light);
+  
+  // Keep track of animation elements
+  group.userData = { ring, cylinder, light, color: colorStr, baseTime: Math.random() * 100 };
+  
+  return group;
+}
+
+function syncDetectedTargets(targetsList) {
+  // Update sidebar list
+  const elList = document.getElementById('console-target-list');
+  if (elList) {
+    if (!targetsList || targetsList.length === 0) {
+      elList.innerHTML = `<div style="text-align: center; color: var(--text-muted); font-size: 11px; padding: 10px;">No targets detected yet.</div>`;
+    } else {
+      elList.innerHTML = '';
+      targetsList.forEach(t => {
+        const item = document.createElement('div');
+        item.style.background = 'rgba(255,255,255,0.05)';
+        item.style.border = '1px solid var(--glass-border)';
+        item.style.borderRadius = '6px';
+        item.style.padding = '8px';
+        item.style.display = 'flex';
+        item.style.flexDirection = 'column';
+        item.style.gap = '4px';
+        item.style.marginBottom = '6px';
+        
+        const badgeColor = t.color === 'red' ? '#ef4444' : '#3b82f6';
+        const labelText = t.color === 'red' ? 'ENEMY' : 'FRIEND';
+        
+        item.innerHTML = `
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <span style="font-size:10px; font-weight:bold; color:${badgeColor}; border:1px solid ${badgeColor}; padding:1px 4px; border-radius:3px;">${labelText}</span>
+            <span style="font-size:9px; color:var(--text-muted);">${new Date(t.timestamp).toLocaleTimeString()}</span>
+          </div>
+          <div class="mono" style="font-size:11px; margin-top:4px; display:flex; justify-content:space-between;">
+            <span>LAT: ${t.lat.toFixed(6)}°</span>
+            <span>LON: ${t.lon.toFixed(6)}°</span>
+          </div>
+        `;
+        elList.appendChild(item);
+      });
+    }
+  }
+
+  // Update 3D beacons
+  const activeIds = new Set((targetsList || []).map(t => t.id));
+  
+  // Remove dead beacons
+  for (const [id, mesh] of targetBeacons.entries()) {
+    if (!activeIds.has(id)) {
+      scene.remove(mesh);
+      mesh.traverse(child => {
+        if (child.isMesh) {
+          child.geometry.dispose();
+          child.material.dispose();
+        }
+      });
+      targetBeacons.delete(id);
+    }
+  }
+  
+  // Add or update active beacons
+  if (targetsList) {
+    targetsList.forEach(t => {
+      let beacon = targetBeacons.get(t.id);
+      if (!beacon) {
+        beacon = createTargetBeaconMesh(t.color);
+        scene.add(beacon);
+        targetBeacons.set(t.id, beacon);
+      }
+      
+      // Position beacon
+      if (homeLat !== null) {
+        const wPos = geoToWorld(t.lat, t.lon, homeLat, homeLon);
+        const elevation = tileManager ? tileManager.getElevationAt(t.lat, t.lon) : 0;
+        beacon.position.set(wPos.x, elevation + 0.1, wPos.z);
+      }
+    });
+  }
+}
+
+function handleTargetDetection(data) {
+  if (!payloadCamera) return;
+
+  const ndcCoords = new THREE.Vector2(data.x, data.y);
+  const raycaster = new THREE.Raycaster();
+  raycaster.setFromCamera(ndcCoords, payloadCamera);
+
+  const meshes = [];
+  if (tileManager && tileManager.tiles) {
+    for (const [key, value] of tileManager.tiles.entries()) {
+      if (value.state === 'ready' && value.mesh) {
+        meshes.push(value.mesh);
+      }
+    }
+  }
+
+  const intersects = raycaster.intersectObjects(meshes, true);
+  if (intersects.length > 0) {
+    const hitPoint = intersects[0].point;
+    if (homeLat !== null) {
+      const geo = worldToGeo(hitPoint.x, hitPoint.z, homeLat, homeLon);
+      sendWsCommand({
+        type: 'report_target',
+        target: {
+          color: data.color,
+          lat: geo.lat,
+          lon: geo.lon
+        }
+      });
+    }
+  }
+}
+
 let ws            = null;
 let lastTelemetry = null;
 let wsPingSent    = 0;
@@ -2500,12 +3138,23 @@ function connectWebSocket() {
     const now    = performance.now();
     wsLatencyMs  = Math.round(now - wsPingSent);
     wsPingSent   = now;
-    // Log occasionally to prevent spam, but still provide confirmation
     if (Math.random() < 0.05) {
       console.log('[WS] Received telemetry frame. Latency: ' + wsLatencyMs + 'ms');
     }
     try { 
-      lastTelemetry = JSON.parse(event.data); 
+      const data = JSON.parse(event.data); 
+      if (data && data.type === 'target_detection') {
+        handleTargetDetection(data);
+      } else if (data && data.type === 'camera_process_status') {
+        if (window.updateGlobalCameraStatus) {
+          window.updateGlobalCameraStatus(data.running);
+        }
+      } else {
+        lastTelemetry = data;
+        if (data.detectedTargets) {
+          syncDetectedTargets(data.detectedTargets);
+        }
+      }
     } catch(err) {
       console.error('[WS] JSON parse error: ', err, event.data);
     }
@@ -2956,6 +3605,39 @@ function animate() {
           triggerAutoAlign(t.route);
           createRunway(runwaySettings);
         }
+
+        // Auto teleport competition field to start of mission
+        if (t.route && t.route.length > 0) {
+          const startWp = t.route[0];
+          competitionFieldSettings.lat = startWp.lat;
+          competitionFieldSettings.lon = startWp.lon;
+          competitionFieldSettings.enabled = true;
+
+          const elCompEnabled = document.getElementById('comp-field-enabled');
+          if (elCompEnabled) {
+            elCompEnabled.checked = true;
+          }
+
+          const elCompLat = document.getElementById('comp-field-lat');
+          const elCompLon = document.getElementById('comp-field-lon');
+          const elCompLatVal = document.getElementById('val-comp-field-lat');
+          const elCompLonVal = document.getElementById('val-comp-field-lon');
+
+          if (elCompLat) {
+            elCompLat.min = (startWp.lat - 0.02).toFixed(4);
+            elCompLat.max = (startWp.lat + 0.02).toFixed(4);
+            elCompLat.value = startWp.lat.toFixed(6);
+          }
+          if (elCompLon) {
+            elCompLon.min = (startWp.lon - 0.02).toFixed(4);
+            elCompLon.max = (startWp.lon + 0.02).toFixed(4);
+            elCompLon.value = startWp.lon.toFixed(6);
+          }
+          if (elCompLatVal) elCompLatVal.textContent = startWp.lat.toFixed(4);
+          if (elCompLonVal) elCompLonVal.textContent = startWp.lon.toFixed(4);
+          
+          createCompetitionField();
+        }
       }
       // Update active waypoint highlight
       const currentWp = t.status?.active_wp ?? -1;
@@ -2990,6 +3672,34 @@ function animate() {
     controls.target.lerp(droneGroup.position, 0.04);
   }
   controls.update();
+
+  if (competitionFieldGroup && tileManager) {
+    const elevation = tileManager.getElevationAt(competitionFieldSettings.lat, competitionFieldSettings.lon);
+    competitionFieldGroup.position.y = elevation + 0.08;
+  }
+
+  // Animate target beacons
+  if (typeof targetBeacons !== 'undefined' && targetBeacons) {
+    const elapsed = timer.getElapsed();
+    for (const [id, beacon] of targetBeacons.entries()) {
+      const ud = beacon.userData;
+      if (ud) {
+        const pulse = Math.sin(elapsed * 5.0 + ud.baseTime);
+        if (ud.ring) {
+          ud.ring.scale.setScalar(1.0 + (pulse + 1.0) * 0.5);
+          ud.ring.material.opacity = 0.6 - (pulse + 1.0) * 0.25;
+        }
+        if (ud.cylinder) {
+          ud.cylinder.scale.x = 1.0 + pulse * 0.1;
+          ud.cylinder.scale.z = 1.0 + pulse * 0.1;
+          ud.cylinder.material.opacity = 0.3 + pulse * 0.1;
+        }
+        if (ud.light) {
+          ud.light.intensity = 1.5 + pulse * 0.5;
+        }
+      }
+    }
+  }
 
   if (shaderPass) {
     shaderPass.uniforms.uTime.value = timer.getElapsed();
@@ -3041,6 +3751,7 @@ function initDraggablePanels() {
     document.getElementById('panel-flight'),
     document.getElementById('panel-runway'),
     document.getElementById('panel-map'),
+    document.getElementById('panel-mission'),
     document.getElementById('payload-camera-panel')
   ];
 
@@ -3242,7 +3953,46 @@ function initPanelToggles() {
   });
 }
 
+function initMissionControls() {
+  const btnClear = document.getElementById('btn-mission-clear');
+  const btnDownload = document.getElementById('btn-mission-download');
+  const btnUpload = document.getElementById('btn-mission-upload');
+
+  if (btnClear) {
+    btnClear.addEventListener('click', () => {
+      localMission = [];
+      updateMissionUI();
+      
+      buildRouteVisuals([], homeLat || 37.3914, homeLon || 36.8522);
+      
+      sendWsCommand({
+        type: 'set_route',
+        route: []
+      });
+    });
+  }
+
+  if (btnDownload) {
+    btnDownload.addEventListener('click', downloadQGCPlan);
+  }
+
+  if (btnUpload) {
+    btnUpload.addEventListener('click', () => {
+      if (localMission.length === 0) {
+        alert('Simülasyona yüklemek için en az bir waypoint eklemelisiniz.');
+        return;
+      }
+      sendWsCommand({
+        type: 'set_route',
+        route: localMission
+      });
+      alert(`Plan simülasyona yüklendi. (${localMission.length} Waypoint)`);
+    });
+  }
+}
+
 initDraggablePanels();
 initPanelToggles();
+initMissionControls();
 
 animate();

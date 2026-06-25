@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Göktürk UAV — OpenCV Live Stream</title>
+  
+  <!-- Material Design 3 typography and icon set -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,400,0,0&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  
+  <!-- Link the app's CSS stylesheet for MD3 variables -->
+  <link rel="stylesheet" href="style.css">
+  
+  <style>
+    body {
+      background-color: var(--md-sys-color-background, #111318);
+      color: var(--md-sys-color-on-background, #e2e2e9);
+      font-family: var(--font-ui), 'Inter', sans-serif;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    #top-bar {
+      position: relative; /* flow layout instead of fixed */
+      top: unset;
+      left: unset;
+      right: unset;
+      height: 64px;
+      padding: 0 24px;
+      background: var(--md-sys-color-surface-dim, #111318);
+      border-bottom: 1px solid var(--md-sys-color-outline-variant, #45464f);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      box-shadow: var(--md-sys-elevation-1);
+    }
+
+    #logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    main {
+      flex-grow: 1;
+      height: calc(100vh - 64px);
+      padding: 24px;
+      background: var(--md-sys-color-background, #111318);
+    }
+
+    .workspace-container {
+      display: grid;
+      grid-template-columns: 1fr 340px;
+      gap: 20px;
+      height: 100%;
+      align-items: stretch;
+    }
+
+    .viewport-card {
+      background: var(--md-sys-color-surface-container, #1d1f24);
+      border: 1px solid var(--md-sys-color-outline-variant, #45464f);
+      border-radius: 16px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      box-shadow: var(--md-sys-elevation-2);
+    }
+
+    .card-header {
+      padding: 14px 20px;
+      background: var(--md-sys-color-surface-container-high, #272a2f);
+      border-bottom: 1px solid var(--md-sys-color-outline-variant, #45464f);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .card-header-icon {
+      font-size: 20px;
+      color: var(--md-sys-color-primary, #b8c7ff);
+    }
+
+    .card-header-title {
+      font-weight: 600;
+      font-size: 13px;
+      letter-spacing: 0.02em;
+    }
+
+    .badge-live {
+      margin-left: auto;
+      background: var(--md-sys-color-error-container, #93000a);
+      color: var(--md-sys-color-error, #ffb4ab);
+      font-size: 9px;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 9999px;
+      letter-spacing: 0.05em;
+      border: 1px solid var(--md-sys-color-error, #ffb4ab);
+      animation: pulse-glow 2s infinite;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    @keyframes pulse-glow {
+      0% { opacity: 0.7; }
+      50% { opacity: 1; }
+      100% { opacity: 0.7; }
+    }
+
+    .stream-container {
+      flex-grow: 1;
+      background: #000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .mjpeg-stream {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+    }
+
+    /* Sidebar list panel styled matching the MD3 app shell */
+    .hud-panel {
+      background: var(--md-sys-color-surface-container, #1d1f24);
+      border: 1px solid var(--md-sys-color-outline-variant, #45464f);
+      border-radius: 16px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      box-shadow: var(--md-sys-elevation-2);
+    }
+
+    .panel-title {
+      font-size: 13px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--md-sys-color-on-surface, #e2e2e9);
+      border-bottom: 1px solid var(--md-sys-color-outline-variant, #45464f);
+      padding-bottom: 8px;
+      margin-bottom: 16px;
+    }
+
+    .target-list-container {
+      flex-grow: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding-right: 4px;
+    }
+
+    .target-card {
+      background: var(--md-sys-color-surface-container-low, #191b20);
+      border: 1px solid var(--md-sys-color-outline-variant, #45464f);
+      border-radius: 10px;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      transition: background-color 0.2s, border-color 0.2s;
+    }
+
+    .target-card:hover {
+      background: var(--md-sys-color-surface-container-high, #272a2f);
+    }
+
+    .target-card.red {
+      border-left: 4px solid var(--md-sys-color-error, #ffb4ab);
+    }
+
+    .target-card.blue {
+      border-left: 4px solid var(--md-sys-color-primary, #b8c7ff);
+    }
+
+    .target-header {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+    }
+
+    .target-header.red {
+      color: var(--md-sys-color-error, #ffb4ab);
+    }
+
+    .target-header.blue {
+      color: var(--md-sys-color-primary, #b8c7ff);
+    }
+
+    .target-coords {
+      font-family: var(--font-mono), 'JetBrains Mono', monospace;
+      font-size: 11px;
+      color: var(--md-sys-color-on-surface, #e2e2e9);
+    }
+
+    .target-time {
+      font-size: 9px;
+      color: var(--md-sys-color-on-surface-variant, #c5c6d0);
+      margin-top: 4px;
+    }
+
+    .no-targets {
+      text-align: center;
+      color: var(--md-sys-color-on-surface-variant, #c5c6d0);
+      font-size: 12px;
+      padding: 40px 0;
+      opacity: 0.5;
+    }
+
+    .btn-action {
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      height: 36px;
+      padding: 0 16px;
+      border-radius: 18px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+      background: transparent;
+      color: var(--md-sys-color-on-surface-variant, #c5c6d0);
+      border: 1px solid var(--md-sys-color-outline-variant, #45464f);
+    }
+
+    .btn-action:hover {
+      background: var(--md-sys-color-surface-container-high, #272a2f);
+      color: var(--md-sys-color-on-surface, #e2e2e9);
+    }
+  </style>
+</head>
+<body class="md3-layout">
+
+  <header id="top-bar">
+    <div id="logo">
+      <span class="material-symbols-rounded brand-icon" style="color: var(--md-sys-color-error);" aria-hidden="true">insights</span>
+      <span class="logo-text">Göktürk <em>OpenCV Stream</em></span>
+    </div>
+    <div class="top-bar-right" style="display: flex; align-items: center; gap: 12px;">
+      <button id="btn-camera-processor-toggle" class="btn-action" style="border-color: rgba(245,158,11,0.35); cursor: pointer;">
+        <span class="material-symbols-rounded" id="icon-camera-processor-toggle" style="font-size: 16px;">smart_toy</span>
+        <span id="txt-camera-processor-toggle">Start Engine</span>
+      </button>
+      <button class="btn-action" onclick="window.close()">
+        <span class="material-symbols-rounded" style="font-size: 16px;">close</span>
+        <span>Close</span>
+      </button>
+    </div>
+  </header>
+
+  <main>
+    <div class="workspace-container">
+      <!-- Left side: Live Camera Stream viewport -->
+      <section class="viewport-card">
+        <div class="card-header">
+          <span class="material-symbols-rounded card-header-icon">videocam</span>
+          <span class="card-header-title">Live Vision Stream (Raspberry Pi 5)</span>
+          <span class="badge-live">
+            <span class="material-symbols-rounded" style="font-size: 10px;">sensors</span>
+            <span>LIVE OpenCV</span>
+          </span>
+        </div>
+        <div class="stream-container">
+          <img id="stream-img" class="mjpeg-stream" src="/camera/processed_stream" alt="No processed frame received. Make sure camera_processor.py is running." onerror="this.src='data:image/svg+xml;utf8,<svg xmlns=\'http://www.w3.org/2000/svg\' width=\'640\' height=\'360\' viewBox=\'0 0 640 360\'><rect width=\'640\' height=\'360\' fill=\'%23111\'/><text x=\'50%%\' y=\'50%%\' dominant-baseline=\'middle\' text-anchor=\'middle\' fill=\'%23c5c6d0\' font-family=\'sans-serif\' font-size=\'14\'>WAITING FOR OPENCV PYTHON FEED...</text></svg>'">
+        </div>
+      </section>
+
+      <!-- Right side: Target tracking panel -->
+      <aside class="hud-panel">
+        <h2 class="panel-title" style="display: flex; align-items: center; gap: 6px;">
+          <span class="material-symbols-rounded" style="font-size: 18px; color: var(--md-sys-color-primary);">radar</span>
+          <span>Target Detections</span>
+        </h2>
+        <div id="target-list" class="target-list-container">
+          <div class="no-targets">No targets reported yet.</div>
+        </div>
+      </aside>
+    </div>
+  </main>
+
+  <script>
+    const targetList = document.getElementById('target-list');
+    let knownTargetsCount = 0;
+
+    // Establish websocket connection to get telemetry target updates
+    const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsPort = location.port === '5173' ? '8080' : location.port;
+    const wsUrl = `${wsProto}//${location.hostname}:${wsPort || '8080'}`;
+    const ws = new WebSocket(wsUrl);
+
+    const toggleBtn = document.getElementById('btn-camera-processor-toggle');
+    const toggleIcon = document.getElementById('icon-camera-processor-toggle');
+    const toggleTxt = document.getElementById('txt-camera-processor-toggle');
+    let isProcessorRunning = false;
+
+    async function updateProcessorStatus(running) {
+      isProcessorRunning = running;
+      if (toggleBtn) {
+        if (running) {
+          toggleBtn.classList.add('active');
+          toggleBtn.style.borderColor = 'var(--md-sys-color-error, #ffb4ab)';
+          toggleBtn.style.background = 'rgba(239, 68, 68, 0.15)';
+          if (toggleIcon) {
+            toggleIcon.textContent = 'stop_circle';
+            toggleIcon.style.color = 'var(--md-sys-color-error, #ffb4ab)';
+          }
+          if (toggleTxt) toggleTxt.textContent = 'Stop Engine';
+        } else {
+          toggleBtn.classList.remove('active');
+          toggleBtn.style.borderColor = 'rgba(245,158,11,0.35)';
+          toggleBtn.style.background = 'transparent';
+          if (toggleIcon) {
+            toggleIcon.textContent = 'smart_toy';
+            toggleIcon.style.color = '';
+          }
+          if (toggleTxt) toggleTxt.textContent = 'Start Engine';
+        }
+      }
+    }
+
+    if (toggleBtn) {
+      toggleBtn.addEventListener('click', async () => {
+        const endpoint = isProcessorRunning ? '/api/camera/stop' : '/api/camera/start';
+        toggleBtn.disabled = true;
+        try {
+          const response = await fetch(endpoint, { method: 'POST' });
+          const res = await response.json();
+          if (res.status === 'started' || res.status === 'running') {
+            updateProcessorStatus(true);
+          } else {
+            updateProcessorStatus(false);
+          }
+        } catch (err) {
+          console.error('[CAM PROCESS] Toggle failed:', err);
+        } finally {
+          toggleBtn.disabled = false;
+        }
+      });
+
+      // Check status on startup
+      fetch('/api/camera/status')
+        .then(r => r.json())
+        .then(data => updateProcessorStatus(data.running))
+        .catch(e => console.error('[CAM PROCESS] Fetch status failed:', e));
+    }
+
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.detectedTargets) {
+          updateTargets(data.detectedTargets);
+        }
+        if (data.type === 'camera_process_status') {
+          updateProcessorStatus(data.running);
+        }
+      } catch (err) {
+        console.error("Failed to parse websocket message", err);
+      }
+    };
+
+    function updateTargets(targets) {
+      if (!targets || targets.length === 0) {
+        targetList.innerHTML = '<div class="no-targets">No targets reported yet.</div>';
+        knownTargetsCount = 0;
+        return;
+      }
+
+      targetList.innerHTML = '';
+      targets.forEach((t) => {
+        const card = document.createElement('div');
+        const colorClass = t.color === 'red' ? 'red' : 'blue';
+        const label = t.color === 'red' ? 'ENEMY TARGET (RED)' : 'FRIENDLY TARGET (BLUE)';
+        
+        card.className = `target-card ${colorClass}`;
+        card.innerHTML = `
+          <div class="target-header ${colorClass}">${label}</div>
+          <div class="target-coords">LAT: ${t.lat.toFixed(6)}°</div>
+          <div class="target-coords">LON: ${t.lon.toFixed(6)}°</div>
+          <div class="target-time">${new Date(t.timestamp).toLocaleTimeString()}</div>
+        `;
+        targetList.appendChild(card);
+      });
+
+      // Play beep sound if new target detected
+      if (targets.length > knownTargetsCount) {
+        playBeep();
+        knownTargetsCount = targets.length;
+      }
+    }
+
+    function playBeep() {
+      try {
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const oscillator = audioCtx.createOscillator();
+        const gainNode = audioCtx.createGain();
+
+        oscillator.connect(gainNode);
+        gainNode.connect(audioCtx.destination);
+
+        oscillator.type = 'sine';
+        oscillator.frequency.setValueAtTime(880, audioCtx.currentTime); // A5 note
+        gainNode.gain.setValueAtTime(0.08, audioCtx.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.3);
+
+        oscillator.start();
+        oscillator.stop(audioCtx.currentTime + 0.35);
+      } catch (e) {
+        // AudioContext not allowed without interaction
+      }
+    }
+  </script>
+</body>
+</html>

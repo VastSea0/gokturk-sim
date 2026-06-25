@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Göktürk UAV — Python Code Editor</title>
+  
+  <!-- Material Design 3 typography and icon set -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,400,0,0&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  
+  <!-- Link the app's CSS stylesheet for MD3 variables -->
+  <link rel="stylesheet" href="style.css">
+  
+  <style>
+    body {
+      background-color: var(--md-sys-color-background, #111318);
+      color: var(--md-sys-color-on-background, #e2e2e9);
+      font-family: var(--font-ui), 'Inter', sans-serif;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    #top-bar {
+      position: relative; /* flow layout instead of fixed */
+      top: unset;
+      left: unset;
+      right: unset;
+      height: 64px;
+      padding: 0 24px;
+      background: var(--md-sys-color-surface-dim, #111318);
+      border-bottom: 1px solid var(--md-sys-color-outline-variant, #45464f);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      box-shadow: var(--md-sys-elevation-1);
+    }
+
+    #logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    main {
+      flex-grow: 1;
+      height: calc(100vh - 64px);
+      padding: 24px;
+      background: var(--md-sys-color-background, #111318);
+      display: flex;
+      flex-direction: column;
+    }
+
+    .editor-card {
+      flex-grow: 1;
+      display: flex;
+      background: var(--md-sys-color-surface-container, #1d1f24);
+      border: 1px solid var(--md-sys-color-outline-variant, #45464f);
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow: var(--md-sys-elevation-2);
+      transition: border-color 0.25s, box-shadow 0.25s;
+    }
+
+    .editor-card:focus-within {
+      border-color: var(--md-sys-color-primary, #b8c7ff);
+      box-shadow: 0 0 10px rgba(184, 199, 255, 0.1);
+    }
+
+    .line-numbers {
+      width: 56px;
+      background-color: var(--md-sys-color-surface-container-low, #191b20);
+      border-right: 1px solid var(--md-sys-color-outline-variant, #45464f);
+      padding: 20px 12px;
+      text-align: right;
+      font-family: var(--font-mono), 'JetBrains Mono', monospace;
+      font-size: 12px;
+      color: var(--md-sys-color-on-surface-variant, #c5c6d0);
+      opacity: 0.35;
+      line-height: 1.6;
+      user-select: none;
+      overflow: hidden;
+    }
+
+    textarea {
+      flex-grow: 1;
+      background-color: transparent;
+      border: none;
+      color: var(--md-sys-color-on-surface, #e2e2e9);
+      font-family: var(--font-mono), 'JetBrains Mono', monospace;
+      font-size: 13px;
+      line-height: 1.6;
+      padding: 20px;
+      resize: none;
+      outline: none;
+      tab-size: 4;
+    }
+
+    /* Style override for action buttons to match MD3 spec */
+    .btn-action {
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      height: 36px;
+      padding: 0 16px;
+      border-radius: 18px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .btn-save {
+      background: var(--md-sys-color-primary-container, #294277);
+      color: var(--md-sys-color-on-primary-container, #dae2ff);
+      border: 1px solid transparent;
+    }
+
+    .btn-save:hover {
+      background: var(--md-sys-color-primary, #b8c7ff);
+      color: var(--md-sys-color-on-primary, #102b60);
+    }
+
+    .btn-close {
+      background: transparent;
+      color: var(--md-sys-color-on-surface-variant, #c5c6d0);
+      border: 1px solid var(--md-sys-color-outline-variant, #45464f);
+    }
+
+    .btn-close:hover {
+      background: var(--md-sys-color-surface-container-high, #272a2f);
+      color: var(--md-sys-color-on-surface, #e2e2e9);
+    }
+  </style>
+</head>
+<body class="md3-layout">
+
+  <header id="top-bar">
+    <div id="logo">
+      <span class="material-symbols-rounded brand-icon" style="color: var(--md-sys-color-primary);" aria-hidden="true">terminal</span>
+      <span class="logo-text">Göktürk <em>Python Editor</em></span>
+    </div>
+    <div class="top-bar-right" style="display: flex; align-items: center; gap: 16px;">
+      <div id="toast" style="background: var(--md-sys-color-success-container, #145229); color: var(--md-sys-color-success, #91d5a4); border: 1px solid var(--md-sys-color-success, #91d5a4); padding: 6px 14px; border-radius: 8px; font-size: 11px; opacity: 0; transition: opacity 0.3s; font-weight: 600;">Script Saved!</div>
+      <button class="btn-action btn-close" onclick="window.close()">
+        <span class="material-symbols-rounded" style="font-size: 16px;">close</span>
+        <span>Close</span>
+      </button>
+      <button class="btn-action btn-save" onclick="saveCode()">
+        <span class="material-symbols-rounded" style="font-size: 16px;">save</span>
+        <span>Save Script</span>
+      </button>
+    </div>
+  </header>
+
+  <main>
+    <div class="editor-card">
+      <div id="line-numbers" class="line-numbers">1</div>
+      <textarea id="editor" spellcheck="false" onscroll="syncScroll()" oninput="updateLineNumbers()"></textarea>
+    </div>
+  </main>
+
+  <script>
+    const editor = document.getElementById('editor');
+    const lineNumbers = document.getElementById('line-numbers');
+    const toast = document.getElementById('toast');
+
+    // Fetch initial code
+    async function loadCode() {
+      try {
+        const response = await fetch('/api/code');
+        const data = await response.json();
+        if (data.code) {
+          editor.value = data.code;
+          updateLineNumbers();
+        } else {
+          editor.value = "# Error loading camera_processor.py";
+        }
+      } catch (err) {
+        editor.value = "# Network error loading script";
+        console.error(err);
+      }
+    }
+
+    // Save code changes
+    async function saveCode() {
+      try {
+        const response = await fetch('/api/code', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ code: editor.value })
+        });
+        const data = await response.json();
+        if (data.status === 'success') {
+          showToast("Script saved successfully!");
+        } else {
+          showToast("Failed to save script.", true);
+        }
+      } catch (err) {
+        showToast("Error saving script.", true);
+        console.error(err);
+      }
+    }
+
+    function showToast(msg, isError = false) {
+      toast.textContent = msg;
+      if (isError) {
+        toast.style.backgroundColor = 'var(--md-sys-color-error-container)';
+        toast.style.color = 'var(--md-sys-color-error)';
+        toast.style.borderColor = 'var(--md-sys-color-error)';
+      } else {
+        toast.style.backgroundColor = 'var(--md-sys-color-success-container)';
+        toast.style.color = 'var(--md-sys-color-success)';
+        toast.style.borderColor = 'var(--md-sys-color-success)';
+      }
+      toast.style.opacity = 1;
+      setTimeout(() => {
+        toast.style.opacity = 0;
+      }, 3000);
+    }
+
+    function updateLineNumbers() {
+      const lines = editor.value.split('\n');
+      const count = lines.length;
+      let numberStr = '';
+      for (let i = 1; i <= count; i++) {
+        numberStr += i + '<br>';
+      }
+      lineNumbers.innerHTML = numberStr;
+    }
+
+    function syncScroll() {
+      lineNumbers.scrollTop = editor.scrollTop;
+    }
+
+    // Handle tab key in textarea
+    editor.addEventListener('keydown', function(e) {
+      if (e.key === 'Tab') {
+        e.preventDefault();
+        const start = this.selectionStart;
+        const end = this.selectionEnd;
+        this.value = this.value.substring(0, start) + "    " + this.value.substring(end);
+        this.selectionStart = this.selectionEnd = start + 4;
+        updateLineNumbers();
+      }
+    });
+
+    // Initial load
+    loadCode();
+  </script>
+</body>
+</html>

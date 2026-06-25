@@ -116,11 +116,191 @@ let telemetry = {
   status:   { armed: false, mode: 'POSCTL', system_status: 3, connected: true, active_wp: 0 },
   route:    initialRoute,
   timestamp: Date.now(),
+  detectedTargets: [],
 };
 
 // ─── Express & HTTP & WebSocket Server ──────────────────────────────────────
 const app = express();
+app.use(express.static(path.join(__dirname, 'dist')));
 app.get('/health', (req, res) => res.json({ status: 'running', armed: simState.armed, mode: simState.flightMode }));
+
+const mjpegClients = new Set();
+
+app.get('/camera/stream', (req, res) => {
+  res.writeHead(200, {
+    'Content-Type': 'multipart/x-mixed-replace; boundary=frame',
+    'Cache-Control': 'no-cache, no-store, must-revalidate',
+    'Connection': 'keep-alive',
+    'Pragma': 'no-cache',
+    'Expires': '0'
+  });
+
+  mjpegClients.add(res);
+
+  req.on('close', () => {
+    mjpegClients.delete(res);
+  });
+});
+
+function broadcastMJPEGFrame(base64Frame) {
+  if (mjpegClients.size === 0) return;
+
+  try {
+    const base64Data = base64Frame.replace(/^data:image\/jpeg;base64,/, '');
+    const buffer = Buffer.from(base64Data, 'base64');
+
+    for (const client of mjpegClients) {
+      try {
+        client.write(`\r\n--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ${buffer.length}\r\n\r\n`);
+        client.write(buffer);
+      } catch (err) {
+        mjpegClients.delete(client);
+      }
+    }
+  } catch (e) {
+    console.error('[MJPEG] Broadcast failed:', e.message);
+  }
+}
+
+const processedMjpegClients = new Set();
+
+app.get('/camera/processed_stream', (req, res) => {
+  res.writeHead(200, {
+    'Content-Type': 'multipart/x-mixed-replace; boundary=frame',
+    'Cache-Control': 'no-cache, no-store, must-revalidate',
+    'Connection': 'keep-alive',
+    'Pragma': 'no-cache',
+    'Expires': '0'
+  });
+
+  processedMjpegClients.add(res);
+
+  req.on('close', () => {
+    processedMjpegClients.delete(res);
+  });
+});
+
+function broadcastProcessedMJPEGFrame(base64Frame) {
+  if (processedMjpegClients.size === 0) return;
+
+  try {
+    const base64Data = base64Frame.replace(/^data:image\/jpeg;base64,/, '');
+    const buffer = Buffer.from(base64Data, 'base64');
+
+    for (const client of processedMjpegClients) {
+      try {
+        client.write(`\r\n--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ${buffer.length}\r\n\r\n`);
+        client.write(buffer);
+      } catch (err) {
+        processedMjpegClients.delete(client);
+      }
+    }
+  } catch (e) {
+    console.error('[PROCESSED MJPEG] Broadcast failed:', e.message);
+  }
+}
+
+app.post('/api/processed_frame', express.text({ limit: '10mb' }), (req, res) => {
+  const frame = req.body;
+  if (frame) {
+    broadcastProcessedMJPEGFrame(frame);
+  }
+  res.send('OK');
+});
+
+app.post('/api/target_detection', express.json(), (req, res) => {
+  const detection = req.body;
+  wss.clients.forEach((client) => {
+    if (client.readyState === 1) { // OPEN
+      client.send(JSON.stringify({
+        type: 'target_detection',
+        color: detection.color,
+        x: detection.x,
+        y: detection.y
+      }));
+    }
+  });
+  res.send('OK');
+});
+
+app.get('/api/code', (req, res) => {
+  fs.readFile(path.join(__dirname, 'camera_processor.py'), 'utf8', (err, data) => {
+    if (err) return res.status(500).json({ error: 'Failed to read camera_processor.py' });
+    res.json({ code: data });
+  });
+});
+
+app.post('/api/code', express.json(), (req, res) => {
+  const code = req.body.code;
+  if (typeof code !== 'string') return res.status(400).json({ error: 'Invalid code content' });
+  fs.writeFile(path.join(__dirname, 'camera_processor.py'), code, 'utf8', (err) => {
+    if (err) return res.status(500).json({ error: 'Failed to save camera_processor.py' });
+    res.json({ status: 'success' });
+  });
+});
+
+const { spawn } = require('child_process');
+let cameraProcess = null;
+
+app.post('/api/camera/start', (req, res) => {
+  if (cameraProcess) {
+    return res.json({ status: 'running', message: 'Camera processor is already running.' });
+  }
+
+  console.log('[API] Starting camera_processor.py...');
+  const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
+  cameraProcess = spawn(pythonCmd, ['camera_processor.py'], {
+    cwd: __dirname,
+    stdio: 'pipe'
+  });
+
+  cameraProcess.stdout.on('data', (data) => {
+    console.log(`[CAM PROCESS STDOUT] ${data.toString().trim()}`);
+  });
+
+  cameraProcess.stderr.on('data', (data) => {
+    console.error(`[CAM PROCESS STDERR] ${data.toString().trim()}`);
+  });
+
+  cameraProcess.on('close', (code) => {
+    console.log(`[CAM PROCESS] Exited with code ${code}`);
+    cameraProcess = null;
+    broadcastCameraStatus();
+  });
+
+  res.json({ status: 'started' });
+  broadcastCameraStatus();
+});
+
+app.post('/api/camera/stop', (req, res) => {
+  if (!cameraProcess) {
+    return res.json({ status: 'stopped', message: 'Camera processor is not running.' });
+  }
+
+  console.log('[API] Stopping camera_processor.py...');
+  cameraProcess.kill('SIGINT');
+  setTimeout(() => {
+    if (cameraProcess) {
+      cameraProcess.kill('SIGKILL');
+    }
+  }, 1000);
+  res.json({ status: 'stopped' });
+});
+
+app.get('/api/camera/status', (req, res) => {
+  res.json({ running: !!cameraProcess });
+});
+
+function broadcastCameraStatus() {
+  wss.clients.forEach((client) => {
+    if (client.readyState === 1) {
+      client.send(JSON.stringify({
+        type: 'camera_process_status',
+        running: !!cameraProcess
+      }));
+    }
+  });
+}
 
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
@@ -131,10 +311,22 @@ wss.on('connection', (ws) => {
   connectedClients++;
   console.log(`[WS] Client connected (total: ${connectedClients})`);
   ws.send(JSON.stringify(telemetry));
+  ws.send(JSON.stringify({
+    type: 'camera_process_status',
+    running: !!cameraProcess
+  }));
 
   ws.on('message', (messageData) => {
     try {
       const data = JSON.parse(messageData);
+      
+      if (data.type === 'gimbal_frame') {
+        if (data.frame) {
+          broadcastMJPEGFrame(data.frame);
+        }
+        return;
+      }
+
       console.log(`[WS] Command from UI:`, data.type);
       
       switch (data.type) {
@@ -168,6 +360,40 @@ wss.on('connection', (ws) => {
           simState.is_landing = false;
           simState.is_rtl = false;
           simState.flightMode = 'POSCTL';
+          telemetry.detectedTargets = [];
+          break;
+        case 'report_target':
+          if (data.target && typeof data.target.lat === 'number' && typeof data.target.lon === 'number') {
+            const targetColor = data.target.color || 'red';
+            const targetLat = data.target.lat;
+            const targetLon = data.target.lon;
+            let isDuplicate = false;
+            for (const t of telemetry.detectedTargets) {
+              if (t.color === targetColor) {
+                const dLat = t.lat - targetLat;
+                const dLon = t.lon - targetLon;
+                const dx = dLat * MPDL;
+                const dy = dLon * MPDL * cosLat;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                if (dist < 5.0) {
+                  isDuplicate = true;
+                  break;
+                }
+              }
+            }
+            if (!isDuplicate) {
+              const newTarget = {
+                id: 'target_' + Date.now() + '_' + Math.floor(Math.random() * 1000),
+                color: targetColor,
+                lat: targetLat,
+                lon: targetLon,
+                timestamp: Date.now()
+              };
+              telemetry.detectedTargets.push(newTarget);
+              console.log(`[SIM] New target reported: ${targetColor} at (${targetLat.toFixed(6)}, ${targetLon.toFixed(6)})`);
+              broadcastTelemetry();
+            }
+          }
           break;
         case 'set_route':
           if (Array.isArray(data.route)) {

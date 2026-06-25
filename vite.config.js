@@ -25,9 +25,26 @@ export default defineConfig({
         rewrite: (path) => path.replace(/^\/terrain-tiles/, ''),
         secure: true,
       },
+      // Proxy API requests to the backend server
+      '/api': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+      },
+      // Proxy camera stream requests to the backend server
+      '/camera': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+      },
     },
   },
   build: {
     chunkSizeWarningLimit: 800, // Three.js bundle is large — suppress warning
+    rollupOptions: {
+      input: {
+        main: 'index.html',
+        code: 'code.html',
+        camera_view: 'camera_view.html'
+      }
+    }
   },
 });

@@ -63,8 +63,20 @@
         <button class="toggle-badge" data-target="panel-map" aria-pressed="false">
           <span class="material-symbols-rounded" aria-hidden="true">map</span><span>Map</span>
         </button>
+        <button class="toggle-badge" data-target="panel-mission" aria-pressed="false">
+          <span class="material-symbols-rounded" aria-hidden="true">playlist_add_check</span><span>Mission</span>
+        </button>
         <button class="toggle-badge" data-target="payload-camera-panel" aria-pressed="false">
           <span class="material-symbols-rounded" aria-hidden="true">videocam</span><span>Camera</span>
+        </button>
+        <button class="toggle-badge" data-target="panel-targets" aria-pressed="false">
+          <span class="material-symbols-rounded" aria-hidden="true">radar</span><span>Targets</span>
+        </button>
+        <button class="toggle-badge" onclick="document.getElementById('overlay-editor').style.display='flex'">
+          <span class="material-symbols-rounded" aria-hidden="true" style="color: var(--md-sys-color-primary, #b8c7ff);">terminal</span><span>Editor</span>
+        </button>
+        <button class="toggle-badge" onclick="document.getElementById('overlay-opencv').style.display='flex'">
+          <span class="material-symbols-rounded" aria-hidden="true" style="color: var(--md-sys-color-error, #ffb4ab);">insights</span><span>OpenCV</span>
         </button>
       </div>
 
@@ -145,6 +157,16 @@
               <span class="slider-value" id="val-target-speed">12 m/s</span>
             </div>
             <input type="range" id="sim-target-speed" min="2" max="120" step="1" value="12" />
+          </div>
+        </section>
+
+        <!-- ── LEFT: Detected Targets ──────────────────────────────────────── -->
+        <section class="hud-panel" id="panel-targets" aria-label="Detected Targets" style="display:none">
+          <h2 class="panel-title">Detected Targets</h2>
+          <button class="panel-close-btn" data-target="panel-targets" title="Close panel" aria-label="Close targets panel">&times;</button>
+          
+          <div style="display: flex; flex-direction: column; gap: 8px; max-height: 250px; overflow-y: auto;" id="console-target-list">
+            <div style="text-align: center; color: var(--text-muted); font-size: 11px; padding: 10px;">No targets detected yet.</div>
           </div>
         </section>
       </aside>
@@ -301,6 +323,57 @@
             </div>
             <button id="btn-sandbox-record" class="btn-action" style="margin-top: 4px;">REC SANDBOX</button>
           </div>
+          <!-- Competition Area Controls -->
+          <div id="comp-field-controls" style="border-top: 1px solid var(--glass-border); margin-top: 10px; padding-top: 10px; display: flex; flex-direction: column; gap: 8px;">
+            <h3 class="panel-subtitle" style="font-size: 8px; font-weight: 700; color: var(--text-muted); letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 4px;">Competition Area</h3>
+            <label class="control-row" style="cursor: pointer; padding: 4px 0; display: flex; justify-content: space-between; align-items: center;">
+              <span class="control-label">Show Field</span>
+              <input type="checkbox" id="comp-field-enabled" />
+            </label>
+            <div class="control-slider-group">
+              <div class="slider-header">
+                <span class="control-label">Field Lat</span>
+                <span class="slider-value" id="val-comp-field-lat">37.3920</span>
+              </div>
+              <input type="range" id="comp-field-lat" min="37.3800" max="37.4100" step="0.0001" value="37.3920" />
+            </div>
+            <div class="control-slider-group">
+              <div class="slider-header">
+                <span class="control-label">Field Lon</span>
+                <span class="slider-value" id="val-comp-field-lon">36.8525</span>
+              </div>
+              <input type="range" id="comp-field-lon" min="36.8400" max="36.8700" step="0.0001" value="36.8525" />
+            </div>
+            <div class="control-slider-group">
+              <div class="slider-header">
+                <span class="control-label">Rotation</span>
+                <span class="slider-value" id="val-comp-field-rot">0°</span>
+              </div>
+              <input type="range" id="comp-field-rot" min="0" max="359" step="1" value="0" />
+            </div>
+            <div class="control-slider-group">
+              <div class="slider-header">
+                <span class="control-label">Grid Size (Cols)</span>
+                <span class="slider-value" id="val-comp-field-cols">6</span>
+              </div>
+              <input type="range" id="comp-field-cols" min="2" max="20" step="1" value="6" />
+            </div>
+            <div class="control-slider-group">
+              <div class="slider-header">
+                <span class="control-label">Square Size</span>
+                <span class="slider-value" id="val-comp-field-size">3m</span>
+              </div>
+              <input type="range" id="comp-field-size" min="1" max="15" step="0.5" value="3" />
+            </div>
+            <!-- Interactive Grid Editor -->
+            <div class="control-row" style="flex-direction: column; align-items: stretch; gap: 6px; margin: 6px 0;">
+              <span class="control-label" style="font-weight: 500; font-size: 11px;">Grid Layout Editor (Click to toggle)</span>
+              <div id="comp-field-grid-editor" style="display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; background: rgba(0,0,0,0.3); padding: 6px; border-radius: 8px; border: 1px solid var(--glass-border);">
+                <!-- 36 grid editor cells will be dynamically appended here by JS -->
+              </div>
+            </div>
+            <button id="btn-comp-field-spawn-here" class="btn-action" style="margin-top: 4px;">Spawn at Camera Target</button>
+          </div>
           <div class="control-row">
             <span class="control-label">Provider</span>
             <select id="map-provider" class="map-select">
@@ -334,6 +407,25 @@
             <span class="data-value mono" id="val-tile-count">0</span>
           </div>
           <div id="map-attribution" class="map-attribution-text">Esri, Maxar, Earthstar Geographics</div>
+        </div>
+      </section>
+
+      <!-- ── RIGHT: Mission Planner ────────────────────────────────────────── -->
+      <section class="hud-panel hud-panel--right" id="panel-mission" aria-label="Mission planner" style="display:none">
+        <h2 class="panel-title">Mission Planner</h2>
+        <button class="panel-close-btn" data-target="panel-mission" title="Close panel" aria-label="Close mission panel">&times;</button>
+        <div class="mission-controls" style="display: flex; flex-direction: column; gap: 10px;">
+          <div class="control-row" style="display: flex; gap: 8px;">
+            <button id="btn-mission-clear" class="btn-action" style="flex-grow: 1;">Clear Mission</button>
+            <button id="btn-mission-download" class="btn-action btn-glow" style="flex-grow: 1;">Export .plan</button>
+          </div>
+          <button id="btn-mission-upload" class="btn-action" style="width: 100%;">Upload to Sim</button>
+          <div style="font-size: 9px; color: var(--text-muted); line-height: 1.4; padding: 4px 0; border-bottom: 1px solid var(--glass-border);">
+            💡 <strong>Mode:</strong> Open this panel, then click anywhere on the 3D map/terrain to place flight waypoints. Adjust altitudes individually below.
+          </div>
+          <div id="mission-waypoint-list" style="max-height: 280px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; padding-right: 4px; margin-top: 4px;">
+            <div style="text-align: center; color: var(--text-muted); font-size: 11px; padding: 20px 0;">No waypoints added yet. Click map to add.</div>
+          </div>
         </div>
       </section>
       </aside>
@@ -443,6 +535,12 @@
               <button id="payload-record" class="btn-action payload-record-button">Record timelapse</button>
             </div>
           </div>
+          <div class="payload-camera-buttons" style="margin-top: 10px; border-top: 1px solid var(--glass-border); padding-top: 10px; display: flex; gap: 8px;">
+            <button id="btn-camera-processor-toggle" class="btn-action" style="flex: 1; border-color: rgba(245,158,11,0.35); text-transform: uppercase; justify-content: center; display: inline-flex; align-items: center; gap: 6px;">
+              <span class="material-symbols-rounded" id="icon-camera-processor-toggle" style="font-size: 16px;">smart_toy</span>
+              <span id="txt-camera-processor-toggle">Start OpenCV Engine</span>
+            </button>
+          </div>
           <div class="payload-control-slider" id="vision-motion-controls" hidden>
             <div class="slider-header">
               <span class="control-label">Motion sensitivity</span>
@@ -466,6 +564,43 @@
       <span>🖱 Drag to orbit</span>
       <span>⚲ Scroll to zoom</span>
       <span>⇧ Shift+drag to pan</span>
+    </div>
+
+    <!-- ── Fullscreen overlays for Editor and OpenCV Stream ── -->
+    <div id="overlay-editor" class="fullscreen-overlay" style="display: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 11000; background: var(--md-sys-color-background, #111318); flex-direction: column;">
+      <div class="overlay-header" style="height: 64px; padding: 0 24px; background: var(--md-sys-color-surface-dim, #111318); border-bottom: 1px solid var(--md-sys-color-outline-variant, #45464f); display: flex; align-items: center; justify-content: space-between; box-shadow: var(--md-sys-elevation-1);">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <span class="material-symbols-rounded" style="color: var(--md-sys-color-primary, #b8c7ff);">terminal</span>
+          <span style="font-weight: 600; font-size: 14px; letter-spacing: 0.02em;">Python Camera Code Editor</span>
+        </div>
+        <div style="display: flex; gap: 12px; align-items: center;">
+          <button class="btn-action" onclick="window.open('/code.html', '_blank')">
+            <span class="material-symbols-rounded" style="font-size: 16px;">open_in_new</span><span>New Tab</span>
+          </button>
+          <button class="btn-action" onclick="document.getElementById('overlay-editor').style.display='none'">
+            <span class="material-symbols-rounded" style="font-size: 16px;">close</span><span>Close</span>
+          </button>
+        </div>
+      </div>
+      <iframe src="/code.html" style="flex-grow: 1; border: none; width: 100%; height: calc(100vh - 64px);"></iframe>
+    </div>
+
+    <div id="overlay-opencv" class="fullscreen-overlay" style="display: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 11000; background: var(--md-sys-color-background, #111318); flex-direction: column;">
+      <div class="overlay-header" style="height: 64px; padding: 0 24px; background: var(--md-sys-color-surface-dim, #111318); border-bottom: 1px solid var(--md-sys-color-outline-variant, #45464f); display: flex; align-items: center; justify-content: space-between; box-shadow: var(--md-sys-elevation-1);">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <span class="material-symbols-rounded" style="color: var(--md-sys-color-error, #ffb4ab);">insights</span>
+          <span style="font-weight: 600; font-size: 14px; letter-spacing: 0.02em;">OpenCV Live Classification Stream</span>
+        </div>
+        <div style="display: flex; gap: 12px; align-items: center;">
+          <button class="btn-action" onclick="window.open('/camera_view.html', '_blank')">
+            <span class="material-symbols-rounded" style="font-size: 16px;">open_in_new</span><span>New Tab</span>
+          </button>
+          <button class="btn-action" onclick="document.getElementById('overlay-opencv').style.display='none'">
+            <span class="material-symbols-rounded" style="font-size: 16px;">close</span><span>Close</span>
+          </button>
+        </div>
+      </div>
+      <iframe src="/camera_view.html" style="flex-grow: 1; border: none; width: 100%; height: calc(100vh - 64px);"></iframe>
     </div>
 
     <script type="module" src="index.js"></script>
