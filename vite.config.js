@@ -18,6 +18,13 @@ export default defineConfig({
         rewrite: (path) => path.replace(/^\/google-tiles/, ''),
         secure: true,
       },
+      // Proxy AWS Terrain Tiles (Terrarium elevation) to avoid CORS on localhost
+      '/terrain-tiles': {
+        target: 'https://s3.amazonaws.com',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/terrain-tiles/, ''),
+        secure: true,
+      },
     },
   },
   build: {

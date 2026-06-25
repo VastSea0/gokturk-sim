@@ -265,6 +265,20 @@
             </div>
             <input type="range" id="map-zoom" min="15" max="19" step="1" value="17" />
           </div>
+          <div class="control-row">
+            <span class="control-label">Terrain</span>
+            <select id="map-terrain-mode" class="map-select">
+              <option value="2d" selected>2D Flat</option>
+              <option value="3d">3D Elevated</option>
+            </select>
+          </div>
+          <div class="control-slider-group" id="terrain-exaggeration-group" style="display: none;">
+            <div class="slider-header">
+              <span class="control-label">Exaggeration</span>
+              <span class="slider-value" id="val-terrain-exaggeration">2.0×</span>
+            </div>
+            <input type="range" id="terrain-exaggeration" min="1" max="5" step="0.5" value="2" />
+          </div>
           <div class="map-stats">
             <span class="data-label">TILES</span>
             <span class="data-value mono" id="val-tile-count">0</span>

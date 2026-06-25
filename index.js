@@ -210,9 +210,16 @@ class TileManager {
     this.lastCy   = null;
     this._pendingCount = 0;
     this._readyCount   = 0;
+
+    // 3D terrain
+    this.terrainMode   = '2d';   // '2d' | '3d'
+    this.exaggeration  = 2;      // height multiplier
+    this._terrainCache = new Map(); // "tz/tx/ty" → { heights, width, height, scale, subX, subY }
+    this._terrainSegments = 64;  // grid subdivisions per tile
+    this._refElevation = null;   // baseline elevation (set from first terrain fetch)
   }
 
-  /** Build a tile image URL with Vite-proxy awareness. */
+  /** Build a satellite tile image URL with Vite-proxy awareness. */
   _tileUrl(z, ty, tx) {
     const isDev = ['5173','5174','5175','5176'].includes(location.port);
     switch (this.provider) {
@@ -226,6 +233,114 @@ class TileManager {
           ? `/esri-tiles/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${ty}/${tx}`
           : `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${ty}/${tx}`;
     }
+  }
+
+  /** Build an AWS Terrarium elevation tile URL. Max zoom = 15. */
+  _terrainTileUrl(z, x, y) {
+    const tz = Math.min(z, 15);
+    const isDev = ['5173','5174','5175','5176'].includes(location.port);
+    return isDev
+      ? `/terrain-tiles/elevation-tiles-prod/terrarium/${tz}/${x}/${y}.png`
+      : `https://s3.amazonaws.com/elevation-tiles-prod/terrarium/${tz}/${x}/${y}.png`;
+  }
+
+  /**
+   * Fetch and decode a Terrarium elevation tile into a Float32Array of heights.
+   * Returns a promise resolving to { heights: Float32Array, width, height }.
+   */
+  _fetchTerrainData(tx, ty) {
+    const tz = Math.min(this.zoom, 15);
+    // Map satellite tile coords → terrain tile coords (terrain max zoom 15)
+    const scale = Math.pow(2, this.zoom - tz);
+    const ttx = Math.floor(tx / scale);
+    const tty = Math.floor(ty / scale);
+    const cacheKey = `${tz}/${ttx}/${tty}`;
+
+    if (this._terrainCache.has(cacheKey)) {
+      return Promise.resolve(this._terrainCache.get(cacheKey));
+    }
+
+    const url = this._terrainTileUrl(tz, ttx, tty);
+
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => {
+        const size = img.width; // typically 256
+        const canvas = document.createElement('canvas');
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        const data = ctx.getImageData(0, 0, size, size).data;
+
+        const heights = new Float32Array(size * size);
+        for (let i = 0; i < size * size; i++) {
+          const r = data[i * 4];
+          const g = data[i * 4 + 1];
+          const b = data[i * 4 + 2];
+          heights[i] = (r * 256 + g + b / 256) - 32768;
+        }
+
+        // Calibrate reference elevation from the centre of the first tile
+        if (this._refElevation === null) {
+          const ci = Math.floor(size / 2) * size + Math.floor(size / 2);
+          this._refElevation = heights[ci] || 0;
+          console.log(`[Terrain] Reference elevation: ${this._refElevation.toFixed(1)}m ASL`);
+        }
+
+        const result = { heights, width: size, height: size, scale, subX: tx % scale, subY: ty % scale };
+        this._terrainCache.set(cacheKey, result);
+        resolve(result);
+      };
+      img.onerror = () => {
+        // Return flat heights on error
+        const fallback = { heights: new Float32Array(256 * 256), width: 256, height: 256, scale: 1, subX: 0, subY: 0 };
+        resolve(fallback);
+      };
+      img.src = url;
+    });
+  }
+
+  /**
+   * Apply terrain displacement to a PlaneGeometry.
+   * The plane is created facing -Z (XY plane), then rotated -90° around X to become XZ.
+   * So we displace the Z attribute (which becomes Y after rotation).
+   */
+  _applyTerrainDisplacement(geometry, terrainData, tileW, tileD) {
+    const { heights, width: tw, height: th, scale, subX, subY } = terrainData;
+    const pos = geometry.attributes.position;
+    const segs = this._terrainSegments;
+    const cols = segs + 1;
+    const rows = segs + 1;
+
+    // The sub-tile region within the terrain tile (when sat zoom > terrain zoom)
+    const subFrac = 1 / scale;
+    const uStart = subX * subFrac;
+    const vStart = subY * subFrac;
+
+    for (let iy = 0; iy < rows; iy++) {
+      for (let ix = 0; ix < cols; ix++) {
+        const idx = iy * cols + ix;
+
+        // UV within this satellite tile [0..1]
+        const u = ix / segs;
+        const v = iy / segs;
+
+        // Map to terrain tile pixel coordinates
+        const px = Math.min(Math.floor((uStart + u * subFrac) * tw), tw - 1);
+        const py = Math.min(Math.floor((vStart + v * subFrac) * th), th - 1);
+        const hi = py * tw + px;
+
+        const elevation = (heights[hi] || 0) - (this._refElevation || 0);
+
+        // Displace Z (becomes Y after -90° X rotation)
+        pos.setZ(idx, elevation * this.exaggeration);
+      }
+    }
+
+    pos.needsUpdate = true;
+    geometry.computeVertexNormals();
   }
 
   /** Call every frame (internally rate-limits). Loads new tiles, removes distant. */
@@ -280,6 +395,7 @@ class TileManager {
     const tileCz = (nwW.z + seW.z) / 2;
 
     const url = this._tileUrl(this.zoom, ty, tx);
+    const is3D = this.terrainMode === '3d';
 
     this.texLoader.load(
       url,
@@ -292,25 +408,40 @@ class TileManager {
         tex.generateMipmaps = true;
         tex.anisotropy      = Math.min(4, renderer.capabilities.getMaxAnisotropy());
 
-        const geo  = new THREE.PlaneGeometry(Math.abs(tileW), Math.abs(tileD));
+        const segs = is3D ? this._terrainSegments : 1;
+        const geo  = new THREE.PlaneGeometry(Math.abs(tileW), Math.abs(tileD), segs, segs);
         const mat  = new THREE.MeshLambertMaterial({ map: tex });
         const mesh = new THREE.Mesh(geo, mat);
         mesh.rotation.x    = -Math.PI / 2;
         mesh.position.set(tileCx, 0, tileCz);
         mesh.receiveShadow = true;
-        this.scene.add(mesh);
 
-        this.tiles.set(key, { mesh, state: 'ready' });
-        this._pendingCount--;
-        this._readyCount++;
-        this._updateLoadingUI();
+        if (is3D) {
+          // Fetch elevation and displace vertices
+          this._fetchTerrainData(tx, ty).then((terrainData) => {
+            if (!this.tiles.has(key)) return; // disposed while fetching
+            this._applyTerrainDisplacement(geo, terrainData, tileW, tileD);
+            this.scene.add(mesh);
+            this.tiles.set(key, { mesh, state: 'ready' });
+            this._pendingCount--;
+            this._readyCount++;
+            this._updateLoadingUI();
+          });
+        } else {
+          this.scene.add(mesh);
+          this.tiles.set(key, { mesh, state: 'ready' });
+          this._pendingCount--;
+          this._readyCount++;
+          this._updateLoadingUI();
+        }
       },
       undefined,
       () => {
         // On error, fall back to plain terrain colour
         if (!this.tiles.has(key)) return;
 
-        const geo  = new THREE.PlaneGeometry(Math.abs(tileW), Math.abs(tileD));
+        const segs = is3D ? this._terrainSegments : 1;
+        const geo  = new THREE.PlaneGeometry(Math.abs(tileW), Math.abs(tileD), segs, segs);
         const mat  = new THREE.MeshLambertMaterial({ color: 0x5a7a3a });
         const mesh = new THREE.Mesh(geo, mat);
         mesh.rotation.x = -Math.PI / 2;
@@ -369,6 +500,23 @@ class TileManager {
     if (this.zoom === zoom) return;
     this.zoom = zoom;
     this._clearAll();
+  }
+
+  /** Set terrain mode ('2d' or '3d'). Rebuilds all tiles. */
+  setTerrainMode(mode) {
+    if (this.terrainMode === mode) return;
+    this.terrainMode = mode;
+    this._clearAll();
+  }
+
+  /** Set terrain exaggeration factor. Rebuilds all tiles. */
+  setExaggeration(val) {
+    val = Math.max(1, Math.min(5, Number(val) || 2));
+    if (this.exaggeration === val) return;
+    this.exaggeration = val;
+    if (this.terrainMode === '3d') {
+      this._clearAll();
+    }
   }
 
   /** Remove and dispose every tile. Forces full re-download on next update(). */
@@ -1548,6 +1696,39 @@ function initMapControls() {
       cameraFollow = e.target.checked;
     });
   }
+
+  // ── Terrain Mode ──
+  const elTerrainMode = document.getElementById('map-terrain-mode');
+  const elExaggerationGroup = document.getElementById('terrain-exaggeration-group');
+  const elExaggeration = document.getElementById('terrain-exaggeration');
+  const elExaggerationVal = document.getElementById('val-terrain-exaggeration');
+
+  if (elTerrainMode) {
+    elTerrainMode.addEventListener('change', (e) => {
+      const mode = e.target.value;
+      if (tileManager) {
+        tileManager.setTerrainMode(mode);
+        tileManager.lastCx = null;
+        tileManager.lastCy = null;
+      }
+      // Show/hide exaggeration slider
+      if (elExaggerationGroup) {
+        elExaggerationGroup.style.display = mode === '3d' ? 'block' : 'none';
+      }
+    });
+  }
+
+  if (elExaggeration) {
+    elExaggeration.addEventListener('input', (e) => {
+      const val = parseFloat(e.target.value);
+      if (elExaggerationVal) elExaggerationVal.textContent = `${val.toFixed(1)}×`;
+      if (tileManager) {
+        tileManager.setExaggeration(val);
+        tileManager.lastCx = null;
+        tileManager.lastCy = null;
+      }
+    });
+  }
 }
 
 function initPayloadCameraControls() {
@@ -2210,6 +2391,10 @@ function animate() {
         if (provEl) tileManager.setProvider(provEl.value);
         const zoomEl = document.getElementById('map-zoom');
         if (zoomEl) tileManager.setZoom(parseInt(zoomEl.value));
+        const terrainEl = document.getElementById('map-terrain-mode');
+        if (terrainEl) tileManager.setTerrainMode(terrainEl.value);
+        const exagEl = document.getElementById('terrain-exaggeration');
+        if (exagEl) tileManager.setExaggeration(parseFloat(exagEl.value));
       }
       tileManager.update(t.position.lat, t.position.lon);
     }
