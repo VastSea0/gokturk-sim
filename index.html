@@ -282,6 +282,25 @@
             </div>
             <input type="range" id="sandbox-speed" min="10" max="250" step="5" value="50" />
           </div>
+          <!-- Sandbox Recording & Shaders -->
+          <div id="sandbox-rec-controls" style="display: none; border-top: 1px solid var(--glass-border); margin-top: 10px; padding-top: 10px; display: none; flex-direction: column; gap: 8px;">
+            <h3 class="panel-subtitle" style="font-size: 8px; font-weight: 700; color: var(--text-muted); letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 4px;">Sandbox Video Rec</h3>
+            <label class="control-row" style="cursor: pointer; padding: 4px 0; display: flex; justify-content: space-between; align-items: center;">
+              <span class="control-label">Cinematic Shader</span>
+              <input type="checkbox" id="shader-toggle" checked />
+            </label>
+            <div class="control-row" style="padding: 4px 0; display: flex; justify-content: space-between; align-items: center;">
+              <span class="control-label">Rec Speed</span>
+              <select id="sandbox-rec-speed" class="map-select">
+                <option value="1" selected>1X (Normal)</option>
+                <option value="2">2X (Timelapse)</option>
+                <option value="5">5X (Timelapse)</option>
+                <option value="10">10X (Timelapse)</option>
+                <option value="20">20X (Timelapse)</option>
+              </select>
+            </div>
+            <button id="btn-sandbox-record" class="btn-action" style="margin-top: 4px;">REC SANDBOX</button>
+          </div>
           <div class="control-row">
             <span class="control-label">Provider</span>
             <select id="map-provider" class="map-select">

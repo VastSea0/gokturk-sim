@@ -927,7 +927,8 @@ body::after {
   flex-grow: 1;
 }
 
-.payload-record-button.recording {
+.payload-record-button.recording,
+#btn-sandbox-record.recording {
   background: rgba(239, 68, 68, 0.25) !important;
   border-color: rgba(239, 68, 68, 0.6) !important;
   color: #fca5a5 !important;
@@ -2087,7 +2088,8 @@ body::after {
   gap: 8px;
 }
 
-.md3-layout .payload-record-button.recording {
+.md3-layout .payload-record-button.recording,
+.md3-layout #btn-sandbox-record.recording {
   color: var(--md-sys-color-on-error-container) !important;
   background: var(--md-sys-color-error-container) !important;
   border: 0 !important;

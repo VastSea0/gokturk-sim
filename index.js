@@ -16,8 +16,73 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { Sky } from 'three/addons/objects/Sky.js';
 import { Timer } from 'three';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { VisionProcessor, VISION_MODES } from './visionProcessor.js';
 import aircraftModelUrl from './uçakmodel/Başlıksız.glb?url';
+
+// ─── Post-Processing Cinematic Shader ─────────────────────────────────────────
+const CinematicShader = {
+  uniforms: {
+    tDiffuse: { value: null },
+    uEnabled: { value: 1.0 },
+    uTime: { value: 0.0 },
+    uVignetteDarkness: { value: 1.2 },
+    uVignetteOffset: { value: 1.0 },
+    uChromaticAberration: { value: 0.003 }
+  },
+  vertexShader: `
+    varying vec2 vUv;
+    void main() {
+      vUv = uv;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `,
+  fragmentShader: `
+    uniform sampler2D tDiffuse;
+    uniform float uEnabled;
+    uniform float uTime;
+    uniform float uVignetteDarkness;
+    uniform float uVignetteOffset;
+    uniform float uChromaticAberration;
+    varying vec2 vUv;
+
+    void main() {
+      if (uEnabled < 0.5) {
+        gl_FragColor = texture2D(tDiffuse, vUv);
+        return;
+      }
+
+      // Chromatic Aberration (RGB split)
+      vec2 dist = vUv - 0.5;
+      vec2 rUv = vUv - dist * uChromaticAberration;
+      vec2 bUv = vUv + dist * uChromaticAberration;
+
+      vec4 rCol = texture2D(tDiffuse, rUv);
+      vec4 gCol = texture2D(tDiffuse, vUv);
+      vec4 bCol = texture2D(tDiffuse, bUv);
+
+      vec4 color = vec4(rCol.r, gCol.g, bCol.b, 1.0);
+
+      // Vignette effect
+      float uvDist = length(dist);
+      float vignette = smoothstep(uVignetteOffset, uVignetteOffset - uVignetteDarkness, uvDist);
+      color.rgb *= mix(1.0, vignette, 0.7);
+
+      // Contrast and saturation boost (Cinematic tone)
+      color.rgb = mix(vec3(0.5), color.rgb, 1.15); // contrast
+      float luminance = dot(color.rgb, vec3(0.299, 0.587, 0.114));
+      color.rgb = mix(vec3(luminance), color.rgb, 1.2); // saturation
+      
+      // Subtle dynamic grain noise
+      float noise = (fract(sin(dot(vUv * (uTime + 1.0), vec2(12.9898, 78.233))) * 43758.5453) - 0.5) * 0.025;
+      color.rgb += noise;
+
+      gl_FragColor = color;
+    }
+  `
+};
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -51,7 +116,7 @@ const TILE_PROVIDERS = {
 // ─── Renderer ─────────────────────────────────────────────────────────────────
 
 const canvas   = document.getElementById('canvas-3d');
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
@@ -69,6 +134,14 @@ scene.fog = new THREE.Fog(0xc8dff5, 400, 1800);
 
 const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 4000);
 camera.position.set(0, CAMERA_DISTANCE * 0.6, CAMERA_DISTANCE);
+
+// ─── Post-Processing Composer ────────────────────────────────────────────────
+const composer = new EffectComposer(renderer);
+const renderPass = new RenderPass(scene, camera);
+composer.addPass(renderPass);
+
+const shaderPass = new ShaderPass(CinematicShader);
+composer.addPass(shaderPass);
 
 // ─── EO Payload Camera Renderer ──────────────────────────────────────────────
 
@@ -1839,6 +1912,7 @@ function initMapControls() {
       
       const elFollowCheck = document.getElementById('camera-follow');
       const elSpeedGroup = document.getElementById('sandbox-speed-group');
+      const elRecControls = document.getElementById('sandbox-rec-controls');
       if (sandboxModeActive) {
         preSandboxFollowState = cameraFollow;
         cameraFollow = false;
@@ -1847,6 +1921,7 @@ function initMapControls() {
           elFollowCheck.disabled = true;
         }
         if (elSpeedGroup) elSpeedGroup.style.display = 'block';
+        if (elRecControls) elRecControls.style.display = 'flex';
       } else {
         cameraFollow = preSandboxFollowState;
         if (elFollowCheck) {
@@ -1854,6 +1929,10 @@ function initMapControls() {
           elFollowCheck.disabled = false;
         }
         if (elSpeedGroup) elSpeedGroup.style.display = 'none';
+        if (elRecControls) elRecControls.style.display = 'none';
+        if (isSandboxRecording) {
+          stopSandboxRecording();
+        }
       }
       
       // Update visibility of aircraft, shadows, trails, and routes
@@ -1879,6 +1958,42 @@ function initMapControls() {
       const val = parseFloat(e.target.value);
       sandboxMoveSpeed = val;
       if (elSandboxSpeedVal) elSandboxSpeedVal.textContent = `${val} m/s`;
+    });
+  }
+
+  // Cinematic Shader Toggle
+  const elShaderToggle = document.getElementById('shader-toggle');
+  if (elShaderToggle) {
+    // Sync initial state
+    if (shaderPass) {
+      shaderPass.uniforms.uEnabled.value = elShaderToggle.checked ? 1.0 : 0.0;
+    }
+    elShaderToggle.addEventListener('change', (e) => {
+      if (shaderPass) {
+        shaderPass.uniforms.uEnabled.value = e.target.checked ? 1.0 : 0.0;
+      }
+    });
+  }
+
+  // Sandbox Rec Speed Dropdown
+  const elSandboxRecSpeed = document.getElementById('sandbox-rec-speed');
+  if (elSandboxRecSpeed) {
+    sandboxRecSpeed = Number(elSandboxRecSpeed.value) || 1;
+    elSandboxRecSpeed.addEventListener('change', (e) => {
+      sandboxRecSpeed = Number(e.target.value) || 1;
+    });
+  }
+
+  // Sandbox Record Button
+  const elBtnSandboxRecord = document.getElementById('btn-sandbox-record');
+  if (elBtnSandboxRecord) {
+    elBtnSandboxRecord.addEventListener('click', () => {
+      if (isSandboxEncoding) return;
+      if (isSandboxRecording) {
+        stopSandboxRecording();
+      } else {
+        startSandboxRecording();
+      }
     });
   }
 
@@ -2209,6 +2324,136 @@ let cameraFollow = true;
 let sandboxModeActive = false;
 let preSandboxFollowState = true;
 let sandboxMoveSpeed = 50;
+let isSandboxRecording = false;
+let sandboxRecordedFrames = [];
+let sandboxRecSpeed = 1;
+let lastFrameCaptureTime = 0;
+let isSandboxEncoding = false;
+
+function startSandboxRecording() {
+  if (!sandboxModeActive) return;
+  
+  isSandboxRecording = true;
+  sandboxRecordedFrames = [];
+  lastFrameCaptureTime = timer.getElapsed();
+  
+  const elBtnSandboxRecord = document.getElementById('btn-sandbox-record');
+  if (elBtnSandboxRecord) {
+    elBtnSandboxRecord.classList.add('recording');
+    elBtnSandboxRecord.textContent = 'STOP (0f)';
+  }
+  const elSandboxRecSpeed = document.getElementById('sandbox-rec-speed');
+  if (elSandboxRecSpeed) elSandboxRecSpeed.disabled = true;
+}
+
+function stopSandboxRecording() {
+  if (!isSandboxRecording) return;
+  isSandboxRecording = false;
+  
+  const elBtnSandboxRecord = document.getElementById('btn-sandbox-record');
+  const elSandboxRecSpeed = document.getElementById('sandbox-rec-speed');
+  
+  if (elSandboxRecSpeed) elSandboxRecSpeed.disabled = false;
+  
+  if (sandboxRecordedFrames.length === 0) {
+    if (elBtnSandboxRecord) {
+      elBtnSandboxRecord.classList.remove('recording');
+      elBtnSandboxRecord.textContent = 'REC SANDBOX';
+    }
+    return;
+  }
+  
+  isSandboxEncoding = true;
+  if (elBtnSandboxRecord) {
+    elBtnSandboxRecord.disabled = true;
+    elBtnSandboxRecord.textContent = 'ENC 0%';
+  }
+  
+  const recWidth = canvas.width;
+  const recHeight = canvas.height;
+  
+  const hiddenCanvas = document.createElement('canvas');
+  hiddenCanvas.width = recWidth;
+  hiddenCanvas.height = recHeight;
+  const hiddenCtx = hiddenCanvas.getContext('2d');
+  
+  const stream = hiddenCanvas.captureStream(30);
+  
+  let mimeType = 'video/mp4';
+  if (!MediaRecorder.isTypeSupported(mimeType)) {
+    mimeType = 'video/webm; codecs=vp9';
+  }
+  if (!MediaRecorder.isTypeSupported(mimeType)) {
+    mimeType = 'video/webm';
+  }
+  
+  const chunks = [];
+  const recorder = new MediaRecorder(stream, {
+    mimeType,
+    videoBitsPerSecond: 6000000
+  });
+  
+  recorder.ondataavailable = (e) => {
+    if (e.data && e.data.size > 0) {
+      chunks.push(e.data);
+    }
+  };
+  
+  recorder.onstop = () => {
+    const blob = new Blob(chunks, { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    const ext = mimeType.includes('mp4') ? 'mp4' : 'webm';
+    link.download = `gokturk-sandbox-timelapse-${new Date().toISOString().replace(/[:.]/g, '-')}.${ext}`;
+    link.click();
+    URL.revokeObjectURL(url);
+    
+    isSandboxEncoding = false;
+    if (elBtnSandboxRecord) {
+      elBtnSandboxRecord.disabled = false;
+      elBtnSandboxRecord.classList.remove('recording');
+      elBtnSandboxRecord.textContent = 'REC SANDBOX';
+    }
+  };
+  
+  recorder.start();
+  
+  let frameIndex = 0;
+  
+  const drawNextFrame = () => {
+    if (frameIndex >= sandboxRecordedFrames.length) {
+      setTimeout(() => {
+        recorder.stop();
+      }, 150);
+      return;
+    }
+    
+    const imgBlob = sandboxRecordedFrames[frameIndex];
+    const img = new Image();
+    img.src = URL.createObjectURL(imgBlob);
+    img.onload = () => {
+      hiddenCtx.clearRect(0, 0, recWidth, recHeight);
+      hiddenCtx.drawImage(img, 0, 0);
+      URL.revokeObjectURL(img.src);
+      
+      const progress = Math.round((frameIndex / sandboxRecordedFrames.length) * 100);
+      if (elBtnSandboxRecord) {
+        elBtnSandboxRecord.textContent = `ENC ${progress}%`;
+      }
+      
+      frameIndex++;
+      setTimeout(drawNextFrame, 1000 / 30);
+    };
+    img.onerror = () => {
+      console.error('[SANDBOX REC] Failed to load frame during encoding:', frameIndex);
+      frameIndex++;
+      setTimeout(drawNextFrame, 0);
+    };
+  };
+  
+  drawNextFrame();
+}
 const keysPressed = {};
 
 // ─── Keyboard state tracking for Sandbox Mode ───────────────────────────────
@@ -2551,6 +2796,9 @@ window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
+  if (composer) {
+    composer.setSize(window.innerWidth, window.innerHeight);
+  }
 });
 
 // ─── Map Attribution ──────────────────────────────────────────────────────────
@@ -2743,8 +2991,40 @@ function animate() {
   }
   controls.update();
 
-  renderer.render(scene, camera);
+  if (shaderPass) {
+    shaderPass.uniforms.uTime.value = timer.getElapsed();
+  }
+
+  composer.render();
   payloadCameraSystem.render(timer.getElapsed());
+
+  if (isSandboxRecording) {
+    const currentElapsed = timer.getElapsed();
+    const timeSinceLastFrame = currentElapsed - lastFrameCaptureTime;
+    const targetInterval = sandboxRecSpeed / 30.0;
+    if (timeSinceLastFrame >= targetInterval) {
+      lastFrameCaptureTime += targetInterval;
+      if (currentElapsed - lastFrameCaptureTime > targetInterval) {
+        lastFrameCaptureTime = currentElapsed;
+      }
+      
+      const offscreen = document.createElement('canvas');
+      offscreen.width = canvas.width;
+      offscreen.height = canvas.height;
+      const ctx = offscreen.getContext('2d');
+      ctx.drawImage(canvas, 0, 0);
+      
+      offscreen.toBlob((blob) => {
+        if (isSandboxRecording && blob) {
+          sandboxRecordedFrames.push(blob);
+          const btn = document.getElementById('btn-sandbox-record');
+          if (btn) {
+            btn.textContent = `STOP (${sandboxRecordedFrames.length}f)`;
+          }
+        }
+      }, 'image/jpeg', 0.9);
+    }
+  }
 }
 
 // ─── Floating & Draggable Panels Logic ───
