@@ -184,7 +184,7 @@ wss.on('connection', (ws) => {
           break;
         case 'set_speed':
           if (typeof data.value === 'number') {
-            simState.targetSpeed = Math.min(30, Math.max(2, data.value));
+            simState.targetSpeed = Math.min(120, Math.max(2, data.value));
             console.log(`[WS] Target speed updated via UI: ${simState.targetSpeed} m/s`);
           }
           break;
