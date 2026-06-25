@@ -2514,6 +2514,10 @@ function animate() {
 
 // ─── Floating & Draggable Panels Logic ───
 function initDraggablePanels() {
+  // Material 3 uses a stable app-shell layout. Keep the legacy floating-panel
+  // implementation available for older layouts without letting cards overlap.
+  if (document.body.classList.contains('md3-layout')) return;
+
   const panels = [
     document.getElementById('panel-attitude'),
     document.getElementById('panel-battery'),
@@ -2644,6 +2648,39 @@ function initDraggablePanels() {
 function initPanelToggles() {
   const toggleBadges = document.querySelectorAll('.toggle-badge');
   const closeButtons = document.querySelectorAll('.panel-close-btn');
+  const compactLayout = window.matchMedia('(max-width: 700px)');
+  const defaultWidePanels = new Set([
+    'panel-attitude',
+    'panel-battery',
+    'panel-position',
+    'panel-flight'
+  ]);
+
+  const setPanelVisibility = (badge, active) => {
+    const targetId = badge.getAttribute('data-target');
+    const panel = document.getElementById(targetId);
+    if (!panel) return;
+    badge.classList.toggle('active', active);
+    badge.setAttribute('aria-pressed', String(active));
+    panel.style.display = active
+      ? (targetId === 'payload-camera-panel' ? 'flex' : 'block')
+      : 'none';
+  };
+
+  const applyResponsivePanelDefaults = (isCompact) => {
+    toggleBadges.forEach((badge) => {
+      const targetId = badge.getAttribute('data-target');
+      setPanelVisibility(
+        badge,
+        isCompact ? targetId === 'panel-attitude' : defaultWidePanels.has(targetId)
+      );
+    });
+  };
+
+  applyResponsivePanelDefaults(compactLayout.matches);
+  compactLayout.addEventListener('change', (event) => {
+    applyResponsivePanelDefaults(event.matches);
+  });
 
   toggleBadges.forEach(badge => {
     badge.addEventListener('click', () => {
@@ -2651,11 +2688,23 @@ function initPanelToggles() {
       const panel = document.getElementById(targetId);
       if (!panel) return;
 
-      const isActive = badge.classList.toggle('active');
+      const isActive = !badge.classList.contains('active');
+      if (isActive && compactLayout.matches) {
+        toggleBadges.forEach((otherBadge) => {
+          if (otherBadge !== badge) setPanelVisibility(otherBadge, false);
+        });
+      }
+      setPanelVisibility(badge, isActive);
       if (isActive) {
-        panel.style.display = targetId === 'payload-camera-panel' ? 'flex' : 'block';
-      } else {
-        panel.style.display = 'none';
+        if (targetId !== 'payload-camera-panel') {
+          setTimeout(() => {
+            const sidebar = panel.closest('.sidebar');
+            if (sidebar) {
+              const targetTop = panel.offsetTop - (sidebar.clientHeight - panel.offsetHeight) / 2;
+              sidebar.scrollTop = Math.max(0, targetTop);
+            }
+          }, 0);
+        }
       }
     });
   });
@@ -2672,6 +2721,7 @@ function initPanelToggles() {
       const targetBadge = document.querySelector(`.toggle-badge[data-target="${targetId}"]`);
       if (targetBadge) {
         targetBadge.classList.remove('active');
+        targetBadge.setAttribute('aria-pressed', 'false');
       }
     });
   });

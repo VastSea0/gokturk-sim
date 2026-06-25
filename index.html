@@ -6,14 +6,14 @@
     <meta name="description" content="Göktürk UAV — Real-time 3D telemetry visualization for ArduPilot SITL simulation. Displays live attitude, position, battery and flight data from a virtual UAV." />
     <title>Göktürk UAV — Live 3D Telemetry</title>
 
-    <!-- Google Fonts: Inter for UI, JetBrains Mono for data readouts -->
+    <!-- Material Design 3 typography and icon set -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,400,0,0&family=Roboto:wght@400;500;700&family=Roboto+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
 
     <link rel="stylesheet" href="style.css" />
   </head>
-  <body>
+  <body class="md3-layout">
 
     <!-- ── Three.js Canvas ────────────────────────────────────────────────── -->
     <canvas id="canvas-3d"></canvas>
@@ -21,39 +21,51 @@
     <!-- ── Top Bar ───────────────────────────────────────────────────────── -->
     <header id="top-bar">
       <div id="logo">
-        <svg width="28" height="28" viewBox="0 0 28 28" fill="none" aria-hidden="true">
-          <polygon points="14,2 26,22 2,22" fill="none" stroke="#f59e0b" stroke-width="2"/>
-          <line x1="14" y1="9" x2="14" y2="17" stroke="#f59e0b" stroke-width="2"/>
-          <circle cx="14" cy="19.5" r="1.5" fill="#f59e0b"/>
-        </svg>
-        <span class="logo-text">GÖKTÜRK <em>SIM</em></span>
+        <span class="material-symbols-rounded brand-icon" aria-hidden="true">flight</span>
+        <span class="logo-text">Göktürk <em>Flight Console</em></span>
       </div>
 
       <!-- ── Dynamic UAV State Widget ── -->
       <div id="uav-status-widget">
         <div class="widget-icon" id="uav-icon">🔒</div>
         <div class="widget-info">
-          <div class="widget-label">UAV STATE</div>
+          <div class="widget-label">Vehicle</div>
           <div class="widget-value text-red" id="uav-state-text">DISARMED</div>
         </div>
         <div class="widget-divider"></div>
         <div class="widget-info">
-          <div class="widget-label">FLIGHT PATH</div>
+          <div class="widget-label">Mission</div>
           <div class="widget-value text-muted" id="uav-action-text">STANDBY ON GROUND</div>
         </div>
       </div>
 
       <!-- Panel Quick Toggles -->
       <div id="panel-toggles" aria-label="Toggle HUD panels">
-        <span class="toggles-label">PANELS:</span>
-        <button class="toggle-badge active" data-target="panel-attitude">ATTITUDE</button>
-        <button class="toggle-badge active" data-target="panel-battery">BATTERY</button>
-        <button class="toggle-badge active" data-target="panel-sim">SIM</button>
-        <button class="toggle-badge active" data-target="panel-position">POSITION</button>
-        <button class="toggle-badge active" data-target="panel-flight">FLIGHT</button>
-        <button class="toggle-badge active" data-target="panel-runway">RUNWAY</button>
-        <button class="toggle-badge active" data-target="panel-map">MAP</button>
-        <button class="toggle-badge active" data-target="payload-camera-panel">CAMERA</button>
+        <span class="toggles-label">Views</span>
+        <button class="toggle-badge active" data-target="panel-attitude" aria-pressed="true">
+          <span class="material-symbols-rounded" aria-hidden="true">explore</span><span>Attitude</span>
+        </button>
+        <button class="toggle-badge active" data-target="panel-battery" aria-pressed="true">
+          <span class="material-symbols-rounded" aria-hidden="true">battery_horiz_075</span><span>Power</span>
+        </button>
+        <button class="toggle-badge" data-target="panel-sim" aria-pressed="false">
+          <span class="material-symbols-rounded" aria-hidden="true">tune</span><span>Vehicle</span>
+        </button>
+        <button class="toggle-badge active" data-target="panel-position" aria-pressed="true">
+          <span class="material-symbols-rounded" aria-hidden="true">location_on</span><span>Position</span>
+        </button>
+        <button class="toggle-badge active" data-target="panel-flight" aria-pressed="true">
+          <span class="material-symbols-rounded" aria-hidden="true">speed</span><span>Flight</span>
+        </button>
+        <button class="toggle-badge" data-target="panel-runway" aria-pressed="false">
+          <span class="material-symbols-rounded" aria-hidden="true">flight_takeoff</span><span>Runway</span>
+        </button>
+        <button class="toggle-badge" data-target="panel-map" aria-pressed="false">
+          <span class="material-symbols-rounded" aria-hidden="true">map</span><span>Map</span>
+        </button>
+        <button class="toggle-badge" data-target="payload-camera-panel" aria-pressed="false">
+          <span class="material-symbols-rounded" aria-hidden="true">videocam</span><span>Camera</span>
+        </button>
       </div>
 
       <div class="top-bar-right">
@@ -73,8 +85,8 @@
       <aside class="sidebar sidebar-left" aria-label="Left Controls">
         <!-- ── LEFT: Attitude ──────────────────────────────────────────────── -->
         <section class="hud-panel" id="panel-attitude" aria-label="Attitude">
-          <h2 class="panel-title">ATTITUDE</h2>
-          <button class="panel-close-btn" data-target="panel-attitude" title="Close Panel">&times;</button>
+          <h2 class="panel-title">Attitude</h2>
+          <button class="panel-close-btn" data-target="panel-attitude" title="Close panel" aria-label="Close attitude panel">&times;</button>
 
           <div class="attitude-indicator" id="adi" aria-label="Artificial horizon">
             <canvas id="adi-canvas" width="140" height="140"></canvas>
@@ -98,8 +110,8 @@
 
         <!-- ── LEFT: Battery ───────────────────────────────────────────────── -->
         <section class="hud-panel" id="panel-battery" aria-label="Battery status">
-          <h2 class="panel-title">BATTERY</h2>
-          <button class="panel-close-btn" data-target="panel-battery" title="Close Panel">&times;</button>
+          <h2 class="panel-title">Power</h2>
+          <button class="panel-close-btn" data-target="panel-battery" title="Close panel" aria-label="Close power panel">&times;</button>
           <div class="battery-visual" id="battery-visual" aria-label="Battery level">
             <div class="battery-fill" id="battery-fill"></div>
             <span class="battery-pct" id="battery-pct">--%</span>
@@ -117,13 +129,13 @@
         </section>
 
         <!-- ── LEFT: Simulation ────────────────────────────────────────────── -->
-        <section class="hud-panel" id="panel-sim" aria-label="Simulation settings">
-          <h2 class="panel-title">SIMULATION CONTROLS</h2>
-          <button class="panel-close-btn" data-target="panel-sim" title="Close Panel">&times;</button>
+        <section class="hud-panel" id="panel-sim" aria-label="Simulation settings" style="display:none">
+          <h2 class="panel-title">Vehicle controls</h2>
+          <button class="panel-close-btn" data-target="panel-sim" title="Close panel" aria-label="Close vehicle controls">&times;</button>
           <div class="sim-buttons">
-            <button id="btn-arm" class="btn-action">ARM VEHICLE</button>
-            <button id="btn-reset" class="btn-action">RESET SIM</button>
-            <button id="btn-upload" class="btn-action btn-glow">LOAD PLAN</button>
+            <button id="btn-arm" class="btn-action">Arm vehicle</button>
+            <button id="btn-reset" class="btn-action">Reset simulation</button>
+            <button id="btn-upload" class="btn-action btn-glow">Load flight plan</button>
             <input type="file" id="plan-upload-input" accept=".plan,json" style="display:none;" />
           </div>
           <div id="plan-info" class="plan-info-text">No custom plan loaded</div>
@@ -141,8 +153,8 @@
       <aside class="sidebar sidebar-right" aria-label="Right Controls">
         <!-- ── RIGHT: Position ─────────────────────────────────────────────── -->
         <section class="hud-panel hud-panel--right" id="panel-position" aria-label="Position data">
-        <h2 class="panel-title">POSITION</h2>
-        <button class="panel-close-btn" data-target="panel-position" title="Close Panel">&times;</button>
+        <h2 class="panel-title">Position</h2>
+        <button class="panel-close-btn" data-target="panel-position" title="Close panel" aria-label="Close position panel">&times;</button>
         <div class="data-grid">
           <div class="data-row">
             <span class="data-label">LAT</span>
@@ -168,8 +180,8 @@
 
       <!-- ── RIGHT: Flight ───────────────────────────────────────────────── -->
       <section class="hud-panel hud-panel--right" id="panel-flight" aria-label="Flight performance">
-        <h2 class="panel-title">FLIGHT</h2>
-        <button class="panel-close-btn" data-target="panel-flight" title="Close Panel">&times;</button>
+        <h2 class="panel-title">Flight</h2>
+        <button class="panel-close-btn" data-target="panel-flight" title="Close panel" aria-label="Close flight panel">&times;</button>
         <div class="data-grid">
           <div class="data-row">
             <span class="data-label">GND SPD</span>
@@ -199,9 +211,9 @@
       </section>
 
       <!-- ── RIGHT: Runway ───────────────────────────────────────────────── -->
-      <section class="hud-panel hud-panel--right" id="panel-runway" aria-label="Runway settings">
-        <h2 class="panel-title">RUNWAY (PİST)</h2>
-        <button class="panel-close-btn" data-target="panel-runway" title="Close Panel">&times;</button>
+      <section class="hud-panel hud-panel--right" id="panel-runway" aria-label="Runway settings" style="display:none">
+        <h2 class="panel-title">Runway</h2>
+        <button class="panel-close-btn" data-target="panel-runway" title="Close panel" aria-label="Close runway panel">&times;</button>
         <div class="runway-controls">
           <label class="control-row">
             <span class="control-label">Show Runway</span>
@@ -250,9 +262,9 @@
       </section>
 
       <!-- ── RIGHT: Map Settings ──────────────────────────────────────────── -->
-      <section class="hud-panel hud-panel--right" id="panel-map" aria-label="Map settings">
-        <h2 class="panel-title">MAP SETTINGS</h2>
-        <button class="panel-close-btn" data-target="panel-map" title="Close Panel">&times;</button>
+      <section class="hud-panel hud-panel--right" id="panel-map" aria-label="Map settings" style="display:none">
+        <h2 class="panel-title">Map</h2>
+        <button class="panel-close-btn" data-target="panel-map" title="Close panel" aria-label="Close map panel">&times;</button>
         <div class="map-controls">
           <label class="control-row">
             <span class="control-label">Follow UAV</span>
@@ -307,18 +319,18 @@
       </div>
 
       <!-- ── EO Payload Camera ──────────────────────────────────────────────── -->
-      <section id="payload-camera-panel" aria-label="Payload camera simulator">
+      <section id="payload-camera-panel" aria-label="Payload camera simulator" style="display:none">
         <div class="payload-camera-header">
           <div>
-            <span class="payload-camera-kicker">EO PAYLOAD</span>
-            <h2>GIMBAL CAMERA</h2>
+            <span class="payload-camera-kicker">EO payload</span>
+            <h2>Gimbal camera</h2>
           </div>
           <div style="display: flex; align-items: center; gap: 12px;">
             <label class="payload-camera-power" title="Enable payload camera">
               <span id="payload-camera-state">LIVE</span>
               <input type="checkbox" id="payload-camera-enabled" checked />
             </label>
-            <button class="panel-close-btn" data-target="payload-camera-panel" title="Close Panel" style="position: static; font-size: 18px; line-height: 1;">&times;</button>
+            <button class="panel-close-btn" data-target="payload-camera-panel" title="Close panel" aria-label="Close camera panel" style="position: static; font-size: 18px; line-height: 1;">&times;</button>
           </div>
         </div>
 
@@ -388,7 +400,7 @@
             </label>
           </div>
           <div class="payload-camera-buttons">
-            <button id="payload-capture" class="btn-action payload-capture-button">CAPTURE PNG</button>
+            <button id="payload-capture" class="btn-action payload-capture-button">Capture PNG</button>
             <div class="record-group">
               <select id="payload-timelapse-speed" class="map-select" title="Timelapse Speed">
                 <option value="5">5x</option>
@@ -397,7 +409,7 @@
                 <option value="30">30x</option>
                 <option value="60">60x</option>
               </select>
-              <button id="payload-record" class="btn-action payload-record-button">REC TIMELAPSE</button>
+              <button id="payload-record" class="btn-action payload-record-button">Record timelapse</button>
             </div>
           </div>
           <div class="payload-control-slider" id="vision-motion-controls" hidden>
