@@ -289,6 +289,7 @@
         </div>
         <div class="payload-camera-osd payload-camera-osd--top">
           <span id="payload-camera-rec">● EO</span>
+          <span id="payload-vision-label">VISION RAW</span>
           <span id="payload-camera-fps-label">24 FPS</span>
         </div>
         <div class="payload-camera-osd payload-camera-osd--bottom">
@@ -333,7 +334,24 @@
               <option value="30">30</option>
             </select>
           </label>
+          <label class="payload-fps-control">
+            <span>VISION</span>
+            <select id="payload-vision-mode" class="map-select">
+              <option value="none" selected>RAW</option>
+              <option value="grayscale">GRAYSCALE</option>
+              <option value="edges">EDGE</option>
+              <option value="motion">MOTION</option>
+              <option value="thermal">THERMAL</option>
+            </select>
+          </label>
           <button id="payload-capture" class="btn-action payload-capture-button">CAPTURE PNG</button>
+        </div>
+        <div class="payload-control-slider" id="vision-motion-controls" hidden>
+          <div class="slider-header">
+            <span class="control-label">Motion sensitivity</span>
+            <span class="slider-value" id="val-payload-motion">28</span>
+          </div>
+          <input type="range" id="payload-motion-threshold" min="8" max="80" step="1" value="28" />
         </div>
       </div>
     </section>

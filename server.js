@@ -37,10 +37,10 @@ const CONFIG = {
   }
 };
 
-// ─── Home Coordinates (Kahramanmaraş Sütçüimam University) ───────────────────
-const HOME_LAT = 37.5512;
-const HOME_LON = 36.9196;
-const HOME_ALT = 584; // elevation in meters
+// ─── Home Coordinates (Türkoğlu, Kahramanmaraş) ─────────────────────────────
+const HOME_LAT = 37.3914;
+const HOME_LON = 36.8522;
+const HOME_ALT = 500; // elevation in meters
 const MPDL = 111319.5; // meters per degree latitude
 const cosLat = Math.cos(HOME_LAT * Math.PI / 180);
 
@@ -218,13 +218,74 @@ mav.createMessage = function(msgid, data, cb) {
 };
 let mavReady = false;
 
+// Sensor bitmask so QGC preflight checks see GPS/IMU/battery as healthy.
+const SENSOR_HEALTH_MASK =
+  0x00000001 | // 3D_GYRO
+  0x00000002 | // 3D_ACCEL
+  0x00000004 | // 3D_MAG
+  0x00000020 | // GPS
+  0x00000800 | // Z_ALTITUDE_CONTROL
+  0x00001000 | // XY_POSITION_CONTROL
+  0x00002000 | // MOTOR_OUTPUTS
+  0x00200000 | // AHRS
+  0x02000000;  // BATTERY
+
+// Minimal PX4 params QGC expects before showing "Ready to Fly".
+const SIM_PARAMS = [
+  { id: 'SYS_AUTOSTART', value: 1, type: 6 },
+  { id: 'SYS_HAS_GPS', value: 1, type: 6 },
+  { id: 'SYS_HITL', value: 1, type: 6 },
+  { id: 'COM_ARM_WO_GPS', value: 1, type: 6 },
+  { id: 'COM_PREARM_MODE', value: 0, type: 6 },
+  { id: 'COM_ARM_SWISBTN', value: 0, type: 6 },
+  { id: 'COM_RC_IN_MODE', value: 1, type: 6 },
+  { id: 'CBRK_SUPPLY_CHK', value: 894281, type: 6 },
+  { id: 'CBRK_IO_SAFETY', value: 22027, type: 6 },
+  { id: 'NAV_DLL_ACT', value: 0, type: 6 },
+  { id: 'EKF2_REQ_GPS_H', value: 0, type: 9 },
+  { id: 'EKF2_REQ_NSATS', value: 0, type: 6 },
+  { id: 'COM_ARM_EKF_GPS', value: 0, type: 6 },
+  { id: 'COM_ARM_EKF_POS', value: 0, type: 9 },
+  { id: 'COM_ARM_EKF_VEL', value: 0, type: 9 },
+  { id: 'COM_ARM_EKF_HGT', value: 0, type: 9 },
+  { id: 'COM_ARM_MAG_STR', value: 0, type: 6 },
+  { id: 'COM_ARM_MAG_ANG', value: 0, type: 6 },
+  { id: 'CAL_ACC0_ID', value: 1310988, type: 6 },
+  { id: 'CAL_GYRO0_ID', value: 1310988, type: 6 },
+  { id: 'CAL_MAG0_ID', value: 1310988, type: 6 },
+];
+
+function sendParamValue(index, targetSys, targetComp) {
+  const param = SIM_PARAMS[index];
+  if (!param) return;
+  mav.createMessage('PARAM_VALUE', {
+    param_id: param.id,
+    param_value: param.value,
+    param_type: param.type,
+    param_count: SIM_PARAMS.length,
+    param_index: index,
+  }, (paramMsg) => {
+    sendToQGC(paramMsg.buffer);
+  });
+}
+
+function sendAllParams(targetSys, targetComp) {
+  SIM_PARAMS.forEach((_, index) => {
+    setTimeout(() => sendParamValue(index, targetSys, targetComp), index * 20);
+  });
+}
+
 // ─── UDP Socket for QGroundControl MAVLink Link ──────────────────────────────
 const udpSocket = dgram.createSocket('udp4');
+let qgcEndpoint = { host: CONFIG.udp.qgcHost, port: CONFIG.udp.qgcPort };
 
 function sendToQGC(msgBuffer) {
   udpSocket.send(msgBuffer, 0, msgBuffer.length, CONFIG.udp.qgcPort, CONFIG.udp.qgcHost, (err) => {
     if (err) console.error('[UDP] Error sending MAVLink packet:', err);
   });
+  if (qgcEndpoint.port !== CONFIG.udp.qgcPort || qgcEndpoint.host !== CONFIG.udp.qgcHost) {
+    udpSocket.send(msgBuffer, 0, msgBuffer.length, qgcEndpoint.port, qgcEndpoint.host, () => {});
+  }
 }
 
 // ─── QGC Custom Modes & Handshakes ──────────────────────────────────────────
@@ -586,29 +647,33 @@ function setupMAVLinkListeners() {
   });
 
   // ── 2. Parameter Protocol
-  mav.on('PARAM_REQUEST_LIST', (msg, fields) => {
-    console.log('[MAV] QGC requested param list');
-    // Send a single default parameter value to satisfy QGC
-    mav.createMessage('PARAM_VALUE', {
-      param_id: 'SYS_AUTOSTART',
-      param_value: 1,
-      param_type: 6, // INT32
-      param_count: 1,
-      param_index: 0
-    }, (paramMsg) => {
-      sendToQGC(paramMsg.buffer);
-    });
+  mav.on('PARAM_REQUEST_LIST', (msg) => {
+    console.log(`[MAV] QGC requested param list (${SIM_PARAMS.length} params)`);
+    sendAllParams(msg.system, msg.component);
   });
 
   mav.on('PARAM_REQUEST_READ', (msg, fields) => {
     const paramId = fields.param_id.trim();
-    console.log(`[MAV] Param read: ${paramId}`);
+    const paramIndex = fields.param_index;
+    console.log(`[MAV] Param read: ${paramId || `#${paramIndex}`}`);
+
+    if (paramIndex >= 0 && paramIndex < SIM_PARAMS.length) {
+      sendParamValue(paramIndex, msg.system, msg.component);
+      return;
+    }
+
+    const foundIndex = SIM_PARAMS.findIndex((p) => p.id === paramId);
+    if (foundIndex >= 0) {
+      sendParamValue(foundIndex, msg.system, msg.component);
+      return;
+    }
+
     mav.createMessage('PARAM_VALUE', {
       param_id: paramId,
-      param_value: paramId === 'SYS_AUTOSTART' ? 1 : 0,
+      param_value: 0,
       param_type: 6,
-      param_count: 1,
-      param_index: 0
+      param_count: SIM_PARAMS.length,
+      param_index: 0,
     }, (paramMsg) => {
       sendToQGC(paramMsg.buffer);
     });
@@ -842,7 +907,10 @@ mav.on('ready', () => {
     console.error('[UDP] Port bind failed or encountered error:', err.message);
   });
 
-  udpSocket.on('message', (msg) => {
+  udpSocket.on('message', (msg, rinfo) => {
+    if (rinfo?.address && rinfo.port) {
+      qgcEndpoint = { host: rinfo.address, port: rinfo.port };
+    }
     // Disable system/component filtering during parsing to accept QGC (sysid 255) packets
     mav.sysid = 0;
     mav.compid = 0;
@@ -855,6 +923,8 @@ mav.on('ready', () => {
     console.log(`[UDP] MAVLink listener bound on port ${CONFIG.udp.localPort}`);
   });
 
+  let sentReadyStatus = false;
+
   // Start periodic MAVLink Heartbeat & SysStatus loops to QGC (1 Hz)
   setInterval(() => {
     if (!mavReady) return;
@@ -862,7 +932,7 @@ mav.on('ready', () => {
     const { customMode, baseMode } = getHeartbeatModes();
 
     mav.createMessage('HEARTBEAT', {
-      type: 2,             // MAV_TYPE_QUADROTOR = 2
+      type: 1,             // MAV_TYPE_FIXED_WING = 1
       autopilot: 12,       // MAV_AUTOPILOT_PX4 = 12
       base_mode: baseMode,
       custom_mode: customMode,
@@ -875,9 +945,9 @@ mav.on('ready', () => {
     const voltage = simState.armed ? 15.2 : 16.8;
     const current = simState.armed ? 12.5 : 0.5;
     mav.createMessage('SYS_STATUS', {
-      onboard_control_sensors_present: 0,
-      onboard_control_sensors_enabled: 0,
-      onboard_control_sensors_health: 0,
+      onboard_control_sensors_present: SENSOR_HEALTH_MASK,
+      onboard_control_sensors_enabled: SENSOR_HEALTH_MASK,
+      onboard_control_sensors_health: SENSOR_HEALTH_MASK,
       load: 100,
       voltage_battery: Math.round(voltage * 1000), // mV
       current_battery: Math.round(current * 100),  // cA
@@ -891,6 +961,45 @@ mav.on('ready', () => {
     }, (msg) => {
       sendToQGC(msg.buffer);
     });
+
+    mav.createMessage('GPS_RAW_INT', {
+      time_usec: simState.time_boot_ms * 1000,
+      lat: Math.round(simState.lat * 1e7),
+      lon: Math.round(simState.lon * 1e7),
+      alt: Math.round((simState.alt + HOME_ALT) * 1000),
+      eph: 80,   // HDOP 0.8 m
+      epv: 120,  // VDOP 1.2 m
+      vel: Math.round(simState.speed * 100),
+      cog: Math.round(getHeadingDeg(simState.yaw) * 100),
+      fix_type: 3, // 3D fix
+      satellites_visible: 12,
+    }, (msg) => {
+      sendToQGC(msg.buffer);
+    });
+
+    mav.createMessage('BATTERY_STATUS', {
+      id: 0,
+      battery_function: 0,
+      type: 0,
+      temperature: 250, // 25.0 C
+      voltages: [Math.round((simState.armed ? 15.2 : 16.8) * 1000), 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      current_battery: Math.round((simState.armed ? 12.5 : 0.5) * 100),
+      current_consumed: 0,
+      energy_consumed: 0,
+      battery_remaining: Math.round(simState.battery_remaining),
+    }, (msg) => {
+      sendToQGC(msg.buffer);
+    });
+
+    if (!sentReadyStatus) {
+      sentReadyStatus = true;
+      mav.createMessage('STATUSTEXT', {
+        severity: 6, // MAV_SEVERITY_INFO
+        text: 'Gokturk SITL ready',
+      }, (msg) => {
+        sendToQGC(msg.buffer);
+      });
+    }
   }, 1000);
 
   // Start high frequency loops: Physics, WS Telemetry, MAVLink Streams (10 Hz / 100ms)

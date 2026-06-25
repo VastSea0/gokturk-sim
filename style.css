@@ -801,6 +801,15 @@ body::after {
 
 .payload-camera-osd--top {
   top: 7px;
+  left: 8px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+#payload-vision-label {
+  color: #fbbf24;
 }
 
 .payload-camera-osd--bottom {

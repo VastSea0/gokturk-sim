@@ -5,7 +5,7 @@
  *  1. Realistic sky dome (Three.js Sky shader with sun position)
  *  2. Dynamic satellite tile manager (Esri / Google, zoom 15-19, auto-load/unload)
  *  3. Hemisphere + directional lighting matched to sky sun
- *  4. Procedural quadcopter drone model
+ *  4. GLB aircraft model (uçakmodel/)
  *  5. NED → Three.js Y-up coordinate transforms
  *  6. WebSocket telemetry from Node.js bridge
  *  7. Full HUD with ADI, battery, position, VFR panels
@@ -13,8 +13,11 @@
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { Sky } from 'three/addons/objects/Sky.js';
 import { Timer } from 'three';
+import { VisionProcessor, VISION_MODES } from './visionProcessor.js';
+import aircraftModelUrl from './uçakmodel/Başlıksız.glb?url';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -392,149 +395,31 @@ gridHelper.material.transparent = true;
 gridHelper.position.y = 0.15;
 scene.add(gridHelper);
 
-// ─── Drone Model ──────────────────────────────────────────────────────────────
+// ─── Drone Model (GLB) ───────────────────────────────────────────────────────
 
 const droneGroup = new THREE.Group();
 scene.add(droneGroup);
-
-const bodyMat = new THREE.MeshStandardMaterial({
-  color: 0x1e293b, roughness: 0.3, metalness: 0.85,
-});
-const accentMat = new THREE.MeshStandardMaterial({
-  color: 0xf59e0b, roughness: 0.2, metalness: 0.9,
-  emissive: new THREE.Color(0xf59e0b), emissiveIntensity: 0.2,
-});
-const armMat = new THREE.MeshStandardMaterial({
-  color: 0x0f172a, roughness: 0.4, metalness: 0.7,
-});
-const propMat = new THREE.MeshStandardMaterial({
-  color: 0x334155, roughness: 0.2, metalness: 0.5,
-  transparent: true, opacity: 0.85,
-});
-
-// Fuselage
-const upperBody = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.12, 0.5), bodyMat);
-upperBody.position.y = 0.08;
-upperBody.castShadow = true;
-droneGroup.add(upperBody);
-
-const battPod = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.1, 0.38),
-  new THREE.MeshStandardMaterial({ color: 0x1e3a5f, roughness: 0.25, metalness: 0.6 }));
-battPod.position.y = -0.01;
-battPod.castShadow = true;
-droneGroup.add(battPod);
-
-// Amber top strip
-const strip = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.018, 0.06), accentMat);
-strip.position.set(0, 0.15, 0);
-droneGroup.add(strip);
-
-// Camera dome
-const dome = new THREE.Mesh(
-  new THREE.SphereGeometry(0.07, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2),
-  new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.05, metalness: 0.8 })
-);
-dome.rotation.x = Math.PI;
-dome.position.set(0, 0.04, 0.22);
-droneGroup.add(dome);
-
-// Lens
-const lens = new THREE.Mesh(
-  new THREE.CircleGeometry(0.03, 12),
-  new THREE.MeshStandardMaterial({
-    color: 0x0e7490, roughness: 0, metalness: 1,
-    emissive: new THREE.Color(0x22d3ee), emissiveIntensity: 0.3,
-  })
-);
-lens.rotation.x = Math.PI / 2;
-lens.position.set(0, 0.04, 0.29);
-droneGroup.add(lens);
-
-// Arms & propellers
-const ARM_LENGTH  = 0.8;
-const propGroups  = [];
-const armDefs = [
-  { angle:  Math.PI / 4,              ledColor: 0x22d3ee }, // FL — teal
-  { angle: -Math.PI / 4,              ledColor: 0x22d3ee }, // FR — teal
-  { angle:  Math.PI + Math.PI / 4,    ledColor: 0xef4444 }, // RL — red
-  { angle:  Math.PI - Math.PI / 4,    ledColor: 0xef4444 }, // RR — red
-];
-
-armDefs.forEach(({ angle, ledColor }) => {
-  const tip = new THREE.Vector3(
-    Math.sin(angle) * ARM_LENGTH, 0, -Math.cos(angle) * ARM_LENGTH
-  );
-
-  // Arm tube
-  const armGeo  = new THREE.CylinderGeometry(0.025, 0.035, ARM_LENGTH, 8);
-  const armMesh = new THREE.Mesh(armGeo, armMat);
-  armMesh.position.copy(tip.clone().multiplyScalar(0.5));
-  armMesh.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), tip.clone().normalize());
-  armMesh.castShadow = true;
-  droneGroup.add(armMesh);
-
-  // Motor
-  const motor = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.05, 0.06, 16), bodyMat);
-  motor.position.copy(tip).setY(tip.y + 0.03);
-  motor.castShadow = true;
-  droneGroup.add(motor);
-
-  // Motor ring
-  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.055, 0.008, 8, 24), accentMat);
-  ring.position.copy(tip);
-  ring.rotation.x = Math.PI / 2;
-  droneGroup.add(ring);
-
-  // Propeller group
-  const propGroup = new THREE.Group();
-  propGroup.position.copy(tip).setY(tip.y + 0.075);
-  droneGroup.add(propGroup);
-  propGroups.push(propGroup);
-
-  [0, Math.PI].forEach((ba) => {
-    const bladeGeo = new THREE.CylinderGeometry(0.01, 0.04, 0.38, 8);
-    bladeGeo.applyMatrix4(new THREE.Matrix4().makeScale(1, 1, 0.22));
-    const blade = new THREE.Mesh(bladeGeo, propMat);
-    blade.rotation.y = ba;
-    blade.position.set(Math.sin(ba) * 0.19, 0, -Math.cos(ba) * 0.19);
-    blade.rotation.z = 0.1;
-    propGroup.add(blade);
-  });
-
-  // LED
-  const led = new THREE.Mesh(
-    new THREE.SphereGeometry(0.018, 8, 8),
-    new THREE.MeshStandardMaterial({
-      color: ledColor, emissive: new THREE.Color(ledColor),
-      emissiveIntensity: 2, roughness: 0, metalness: 0,
-    })
-  );
-  led.position.copy(tip).setY(tip.y + 0.04);
-  droneGroup.add(led);
-
-  const ledLight = new THREE.PointLight(ledColor, 1.0, 1.5);
-  ledLight.position.copy(led.position);
-  droneGroup.add(ledLight);
-});
-
-// Body underside glow
-const bodyGlow = new THREE.PointLight(0x60a5fa, 0.4, 2);
-bodyGlow.position.set(0, -0.15, 0);
-droneGroup.add(bodyGlow);
-
-// Landing legs
-[[ 0.18, -0.12], [-0.18, -0.12], [ 0.18, 0.12], [-0.18, 0.12]].forEach(([lx, lz]) => {
-  const leg  = new THREE.Mesh(new THREE.CylinderGeometry(0.01, 0.01, 0.18, 6), armMat);
-  leg.position.set(lx, -0.09, lz);
-  leg.rotation.x = 0.15;
-  droneGroup.add(leg);
-  const foot = new THREE.Mesh(new THREE.SphereGeometry(0.018, 8, 8), armMat);
-  foot.position.set(lx, -0.18, lz + 0.02);
-  droneGroup.add(foot);
-});
-
-droneGroup.scale.setScalar(3.5);
 droneGroup.position.set(0, 10, 0);
+
+const propGroups = [];
+let droneGroundOffset = 0;
+
+function fitAircraftModelToScene(model, targetSpan = 3.5) {
+  model.rotation.y = Math.PI;
+  model.updateMatrixWorld(true);
+
+  const box = new THREE.Box3().setFromObject(model);
+  const size = box.getSize(new THREE.Vector3());
+  const span = Math.max(size.x, size.z);
+  model.scale.setScalar(targetSpan / span);
+
+  model.updateMatrixWorld(true);
+  const fitted = new THREE.Box3().setFromObject(model);
+  const center = fitted.getCenter(new THREE.Vector3());
+  model.position.set(-center.x, -fitted.min.y, -center.z);
+  model.updateMatrixWorld(true);
+  return new THREE.Box3().setFromObject(model);
+}
 
 // ─── Physical EO Gimbal Payload ──────────────────────────────────────────────
 
@@ -630,6 +515,7 @@ class PayloadCameraSystem {
     this._worldQuaternion = new THREE.Quaternion();
     this._carrierWorldQuaternion = new THREE.Quaternion();
     this._carrierEuler = new THREE.Euler(0, 0, 0, 'YXZ');
+    this.vision = new VisionProcessor();
   }
 
   attachTo(carrier, mountPoint = this.mountPoint) {
@@ -728,6 +614,8 @@ class PayloadCameraSystem {
         this.pixelBuffer
       );
       this._copyFlippedPixelsToCanvas();
+      this._applyVisionProcessing();
+      this._drawVisionOverlay();
     } finally {
       this.renderer.setRenderTarget(null);
       this.renderer.shadowMap.autoUpdate = shadowAutoUpdate;
@@ -779,7 +667,61 @@ class PayloadCameraSystem {
       fps: this.fps,
       width: this.canvas.width,
       height: this.canvas.height,
+      vision: this.vision.getSummary(),
     };
+  }
+
+  setVisionMode(mode) {
+    this.vision.setMode(mode);
+    if (mode !== 'motion') {
+      this._clearVisionOverlay();
+    }
+  }
+
+  setMotionThreshold(value) {
+    this.vision.setMotionThreshold(value);
+  }
+
+  getVisionSummary() {
+    return this.vision.getSummary();
+  }
+
+  _applyVisionProcessing() {
+    if (this.vision.mode === 'none') return;
+
+    const processed = this.vision.process(this.imageData);
+    this.canvasContext.putImageData(processed, 0, 0);
+  }
+
+  _drawVisionOverlay() {
+    const { mode, lastDetections } = this.vision;
+    if (mode !== 'motion' || lastDetections.length === 0) return;
+
+    const ctx = this.canvasContext;
+    ctx.save();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = '#22d3ee';
+    ctx.fillStyle = 'rgba(34, 211, 238, 0.18)';
+    ctx.font = '11px JetBrains Mono, monospace';
+
+    for (const box of lastDetections) {
+      ctx.fillRect(box.x, box.y, box.w, box.h);
+      ctx.strokeRect(box.x + 0.5, box.y + 0.5, box.w - 1, box.h - 1);
+      const label = `TGT ${Math.round(box.score * 100)}%`;
+      const labelY = box.y > 14 ? box.y - 5 : box.y + box.h + 12;
+      ctx.fillStyle = 'rgba(2, 5, 8, 0.72)';
+      ctx.fillRect(box.x, labelY - 11, ctx.measureText(label).width + 8, 14);
+      ctx.fillStyle = '#22d3ee';
+      ctx.fillText(label, box.x + 4, labelY);
+      ctx.fillStyle = 'rgba(34, 211, 238, 0.18)';
+    }
+
+    ctx.restore();
+  }
+
+  _clearVisionOverlay() {
+    if (this.vision.mode === 'none') return;
+    this._applyVisionProcessing();
   }
 
   _notifyFrameListeners(timeSeconds) {
@@ -827,6 +769,42 @@ const payloadCameraSystem = new PayloadCameraSystem(
   payloadGimbalPanGroup
 );
 window.gokturkPayloadCamera = payloadCameraSystem;
+window.gokturkVision = {
+  modes: VISION_MODES,
+  setMode: (mode) => payloadCameraSystem.setVisionMode(mode),
+  getMode: () => payloadCameraSystem.vision.mode,
+  getSummary: () => payloadCameraSystem.getVisionSummary(),
+  setMotionThreshold: (value) => payloadCameraSystem.setMotionThreshold(value),
+  processFrame: (imageData) => payloadCameraSystem.vision.process(imageData),
+};
+
+const aircraftLoader = new GLTFLoader();
+aircraftLoader.load(
+  aircraftModelUrl,
+  (gltf) => {
+    const model = gltf.scene;
+    model.traverse((child) => {
+      if (child.isMesh) {
+        child.castShadow = true;
+        child.receiveShadow = true;
+      }
+    });
+
+    const fittedBox = fitAircraftModelToScene(model);
+    droneGroup.add(model);
+
+    const size = fittedBox.getSize(new THREE.Vector3());
+    payloadMountPoint.set(0, fittedBox.min.y + size.y * 0.2, fittedBox.min.z + size.z * 0.12);
+    payloadGimbalPanGroup.position.copy(payloadMountPoint);
+    payloadCameraSystem.attachTo(droneGroup, payloadMountPoint);
+
+    console.log('[AIRCRAFT] GLB model loaded.');
+  },
+  undefined,
+  (error) => {
+    console.error('[AIRCRAFT] GLB model failed to load:', error);
+  }
+);
 
 // ─── Shadow blob ─────────────────────────────────────────────────────────────
 
@@ -1579,6 +1557,9 @@ function initPayloadCameraControls() {
   const tiltInput = document.getElementById('payload-tilt');
   const fovInput = document.getElementById('payload-fov');
   const fpsInput = document.getElementById('payload-fps');
+  const visionModeInput = document.getElementById('payload-vision-mode');
+  const motionThresholdInput = document.getElementById('payload-motion-threshold');
+  const motionControls = document.getElementById('vision-motion-controls');
   const captureButton = document.getElementById('payload-capture');
   const stateLabel = document.getElementById('payload-camera-state');
   const offlineOverlay = document.getElementById('payload-camera-offline');
@@ -1588,6 +1569,21 @@ function initPayloadCameraControls() {
   const angleLabel = document.getElementById('payload-camera-angle-label');
   const fovLabel = document.getElementById('payload-camera-fov-label');
   const fpsLabel = document.getElementById('payload-camera-fps-label');
+  const visionLabel = document.getElementById('payload-vision-label');
+
+  const updateVisionLabel = () => {
+    const summary = payloadCameraSystem.getVisionSummary();
+    const modeText = summary.mode.toUpperCase();
+    if (summary.mode === 'motion') {
+      visionLabel.textContent = `VISION ${modeText} · ${summary.detections.length} TGT`;
+    } else if (summary.mode === 'none') {
+      visionLabel.textContent = 'VISION RAW';
+    } else {
+      visionLabel.textContent = `VISION ${modeText}`;
+    }
+    motionControls.style.display = summary.mode === 'motion' ? 'block' : 'none';
+    motionControls.hidden = summary.mode !== 'motion';
+  };
 
   const updateLabels = () => {
     const panSign = payloadCameraSystem.panDeg >= 0 ? '+' : '';
@@ -1597,6 +1593,7 @@ function initPayloadCameraControls() {
     angleLabel.textContent = `PAN ${panSign}${payloadCameraSystem.panDeg}° / TILT ${payloadCameraSystem.tiltDeg}°`;
     fovLabel.textContent = `FOV ${payloadCameraSystem.fovDeg}°`;
     fpsLabel.textContent = `${payloadCameraSystem.fps} FPS`;
+    updateVisionLabel();
   };
 
   enabledInput.addEventListener('change', (event) => {
@@ -1629,6 +1626,21 @@ function initPayloadCameraControls() {
     payloadCameraSystem.setFps(event.target.value);
     updateLabels();
   });
+
+  visionModeInput.addEventListener('change', (event) => {
+    payloadCameraSystem.setVisionMode(event.target.value);
+    updateLabels();
+  });
+
+  motionThresholdInput.addEventListener('input', (event) => {
+    payloadCameraSystem.setMotionThreshold(event.target.value);
+    document.getElementById('val-payload-motion').textContent = event.target.value;
+    updateLabels();
+  });
+
+  payloadCameraSystem.onFrame(() => {
+    updateVisionLabel();
+  }, { fps: 4 });
 
   captureButton.addEventListener('click', async () => {
     const originalText = captureButton.textContent;
@@ -2051,7 +2063,7 @@ function animate() {
     smoothYaw += yawDelta * SMOOTH_ALPHA;
 
     droneGroup.rotation.set(-smoothPitch, -smoothYaw, smoothRoll, 'ZYX');
-    droneGroup.position.y = smoothAlt + 0.63; // 0.63m offset to place landing feet perfectly on the ground
+    droneGroup.position.y = smoothAlt + droneGroundOffset;
 
     // ── GPS position → XZ world ──────────────────────────────────────────
     if (homeLat !== null && t.position.lat !== 0) {

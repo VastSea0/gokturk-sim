@@ -14,7 +14,7 @@ dist/
 .DS_Store
 .AppleDouble
 .LSOverride
-
+<<
 # Editor configs
 .vscode/settings.json
 .idea/
