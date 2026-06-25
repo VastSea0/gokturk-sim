@@ -127,6 +127,13 @@
             <input type="file" id="plan-upload-input" accept=".plan,json" style="display:none;" />
           </div>
           <div id="plan-info" class="plan-info-text">No custom plan loaded</div>
+          <div class="control-slider-group" style="margin-top: 14px;">
+            <div class="slider-header">
+              <span class="control-label">Target Speed</span>
+              <span class="slider-value" id="val-target-speed">12 m/s</span>
+            </div>
+            <input type="range" id="sim-target-speed" min="2" max="30" step="1" value="12" />
+          </div>
         </section>
       </aside>
 

@@ -1658,6 +1658,20 @@ function initSimulationAndRunway() {
     };
     reader.readAsText(file);
   });
+
+  // Target Speed range slider binding
+  const elTargetSpeed = document.getElementById('sim-target-speed');
+  const elTargetSpeedVal = document.getElementById('val-target-speed');
+  if (elTargetSpeed) {
+    elTargetSpeed.addEventListener('input', (e) => {
+      const val = parseInt(e.target.value, 10);
+      if (elTargetSpeedVal) elTargetSpeedVal.textContent = `${val} m/s`;
+      sendWsCommand({
+        type: 'set_speed',
+        value: val
+      });
+    });
+  }
 }
 
 // ─── Map Controls Binding ─────────────────────────────────────────────────────
@@ -2307,6 +2321,18 @@ function updateHUD(t) {
   const elTileCount = document.getElementById('val-tile-count');
   if (elTileCount && tileManager) {
     elTileCount.textContent = tileManager.tiles.size;
+  }
+
+  // ── Target Speed slider sync ───────────────────────────────────────────
+  if (typeof t.targetSpeed === 'number') {
+    const elTargetSpeed = document.getElementById('sim-target-speed');
+    const elTargetSpeedVal = document.getElementById('val-target-speed');
+    if (elTargetSpeedVal) {
+      elTargetSpeedVal.textContent = `${t.targetSpeed} m/s`;
+    }
+    if (elTargetSpeed && document.activeElement !== elTargetSpeed) {
+      elTargetSpeed.value = t.targetSpeed;
+    }
   }
 }
 

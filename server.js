@@ -97,7 +97,8 @@ let simState = {
   takeoff_alt: 10,
   is_landing: false,
   is_rtl: false,
-  time_boot_ms: 0
+  time_boot_ms: 0,
+  targetSpeed: 12
 };
 
 // Target coordinates for mission/RTL
@@ -179,6 +180,12 @@ wss.on('connection', (ws) => {
               simState.alt = 0;
             }
             telemetry.route = simState.route;
+          }
+          break;
+        case 'set_speed':
+          if (typeof data.value === 'number') {
+            simState.targetSpeed = Math.min(30, Math.max(2, data.value));
+            console.log(`[WS] Target speed updated via UI: ${simState.targetSpeed} m/s`);
           }
           break;
       }
@@ -400,8 +407,8 @@ function updatePhysics() {
       const turn = Math.min(Math.max(yaw_diff, -max_turn), max_turn);
       simState.yaw += turn;
 
-      simState.speed = Math.min(10, dist * 0.5);
-      simState.pitch = -0.15 * (simState.speed / 10);
+      simState.speed = Math.min(simState.targetSpeed, dist * 0.5);
+      simState.pitch = -0.15 * (simState.speed / simState.targetSpeed);
       simState.roll = -0.3 * (turn / max_turn);
 
       const vx = simState.speed * Math.cos(simState.yaw);
@@ -449,8 +456,8 @@ function updatePhysics() {
       const turn = Math.min(Math.max(yaw_diff, -max_turn), max_turn);
       simState.yaw += turn;
 
-      simState.speed = Math.min(12, dist * 0.4);
-      simState.pitch = -0.15 * (simState.speed / 12);
+      simState.speed = Math.min(simState.targetSpeed, dist * 0.4);
+      simState.pitch = -0.15 * (simState.speed / simState.targetSpeed);
       simState.roll = -0.3 * (turn / max_turn);
 
       const vx = simState.speed * Math.cos(simState.yaw);
@@ -534,6 +541,7 @@ function updateTelemetryObject() {
       active_wp:     simState.active_wp,
     },
     route: simState.route,
+    targetSpeed: simState.targetSpeed,
     timestamp: Date.now(),
   };
 }

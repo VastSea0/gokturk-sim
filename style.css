@@ -649,6 +649,33 @@ body::after {
   word-break: break-all;
 }
 
+/* ── Simulation Panel Range Input Styling ── */
+#panel-sim input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.08);
+  outline: none;
+}
+
+#panel-sim input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--color-amber);
+  cursor: pointer;
+  box-shadow: 0 0 5px rgba(245, 158, 11, 0.5);
+  transition: transform 0.1s ease;
+}
+
+#panel-sim input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.25);
+}
+
 /* ── EO Payload Camera ──────────────────────────────────────────────────── */
 #payload-camera-panel {
   position: fixed;
