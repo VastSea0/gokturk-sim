@@ -160,6 +160,14 @@ function geoToWorld(lat, lon, refLat, refLon) {
   };
 }
 
+/** Convert Three.js XZ world metres to lat/lon relative to a reference origin. */
+function worldToGeo(x, z, refLat, refLon) {
+  return {
+    lat: refLat - (z / MPDL),
+    lon: refLon + (x / (MPDL * Math.cos(refLat * Math.PI / 180))),
+  };
+}
+
 /** Web-Mercator tile X from longitude. */
 function lonToTileX(lon, zoom) {
   return Math.floor((lon + 180) / 360 * (1 << zoom));
@@ -343,6 +351,47 @@ class TileManager {
     geometry.computeVertexNormals();
   }
 
+  /** Retrieve baseline-calibrated terrain elevation at a specific lat/lon. */
+  getElevationAt(lat, lon) {
+    if (this.terrainMode !== '3d') return 0;
+
+    const z = this.zoom;
+    const n = 1 << z;
+
+    // Exact fractional tile coordinate relative to satellite zoom
+    const txFloat = ((lon + 180) / 360) * n;
+    const tx = Math.floor(txFloat);
+    const u = txFloat - tx;
+
+    const sinLat = Math.sin(lat * Math.PI / 180);
+    const tyFloat = (0.5 - Math.log((1 + sinLat) / (1 - sinLat)) / (4 * Math.PI)) * n;
+    const ty = Math.floor(tyFloat);
+    const v = tyFloat - ty;
+
+    // Find the loaded terrain tile at max zoom 15
+    const tz = Math.min(z, 15);
+    const scale = Math.pow(2, z - tz);
+    const ttx = Math.floor(tx / scale);
+    const tty = Math.floor(ty / scale);
+    const cacheKey = `${tz}/${ttx}/${tty}`;
+
+    const terrainData = this._terrainCache.get(cacheKey);
+    if (!terrainData) return 0;
+
+    const { heights, width: tw, height: th, subX, subY } = terrainData;
+    const subFrac = 1 / scale;
+    const uStart = subX * subFrac;
+    const vStart = subY * subFrac;
+
+    // Look up pixel elevation
+    const px = Math.min(Math.floor((uStart + u * subFrac) * tw), tw - 1);
+    const py = Math.min(Math.floor((vStart + v * subFrac) * th), th - 1);
+    const hi = py * tw + px;
+
+    const elevation = (heights[hi] || 0) - (this._refElevation || 0);
+    return elevation * this.exaggeration;
+  }
+
   /** Call every frame (internally rate-limits). Loads new tiles, removes distant. */
   update(lat, lon) {
     const cx = lonToTileX(lon, this.zoom);
@@ -426,6 +475,9 @@ class TileManager {
             this._pendingCount--;
             this._readyCount++;
             this._updateLoadingUI();
+
+            // Force route rebuild to snap waypoints to newly loaded heights
+            lastRouteJSON = "";
           });
         } else {
           this.scene.add(mesh);
@@ -1044,7 +1096,13 @@ function appendTrail(x, y, z) {
     // Bottom vertex (ground projection)
     const idxBot = i * 2 + 1;
     curtainPositions[idxBot * 3] = p.x;
-    curtainPositions[idxBot * 3 + 1] = 0.15; // slightly above ground to prevent z-fighting
+    
+    let ptElevation = 0;
+    if (tileManager && homeLat !== null) {
+      const geo = worldToGeo(p.x, p.z, homeLat, homeLon);
+      ptElevation = tileManager.getElevationAt(geo.lat, geo.lon);
+    }
+    curtainPositions[idxBot * 3 + 1] = ptElevation + 0.15; // slightly above terrain to prevent z-fighting
     curtainPositions[idxBot * 3 + 2] = p.z;
 
     // Bottom color: black (blends to 0 in Additive Blending)
@@ -1218,7 +1276,13 @@ function buildRouteVisuals(route, refLat, refLon) {
   route.forEach((wp, i) => {
     if (!wp || (wp.lat === 0 && wp.lon === 0)) return; // Skip dummy coordinates (e.g. Home position metadata or RTL without explicit coordinates)
     const world = geoToWorld(wp.lat, wp.lon, refLat, refLon);
-    const alt = wp.alt || 50;
+    
+    let wpElevation = 0;
+    if (tileManager) {
+      wpElevation = tileManager.getElevationAt(wp.lat, wp.lon);
+    }
+
+    const alt = (wp.alt || 50) + wpElevation;
     const pos = new THREE.Vector3(world.x, alt, world.z);
     pathPoints.push(pos);
 
@@ -1238,7 +1302,7 @@ function buildRouteVisuals(route, refLat, refLon) {
 
     // ── Vertical drop-line to ground ─────────────────────────────────────
     const dropGeo = new THREE.BufferGeometry().setFromPoints([
-      pos, new THREE.Vector3(world.x, 0.5, world.z),
+      pos, new THREE.Vector3(world.x, wpElevation + 0.5, world.z),
     ]);
     const dropLine = new THREE.Line(dropGeo, WP_DROP_MAT.clone());
     dropLine.computeLineDistances();
@@ -1729,6 +1793,8 @@ function initMapControls() {
       if (elExaggerationGroup) {
         elExaggerationGroup.style.display = mode === '3d' ? 'block' : 'none';
       }
+      // Force route rebuild to match new terrain mode
+      lastRouteJSON = "";
     });
   }
 
@@ -1741,6 +1807,8 @@ function initMapControls() {
         tileManager.lastCx = null;
         tileManager.lastCy = null;
       }
+      // Force route rebuild to match new exaggeration
+      lastRouteJSON = "";
     });
   }
 }
@@ -2438,8 +2506,13 @@ function animate() {
     if (yawDelta < -Math.PI) yawDelta += Math.PI * 2;
     smoothYaw += yawDelta * SMOOTH_ALPHA;
 
+    let terrainElevation = 0;
+    if (tileManager && homeLat !== null && t.position.lat !== 0) {
+      terrainElevation = tileManager.getElevationAt(t.position.lat, t.position.lon);
+    }
+
     droneGroup.rotation.set(-smoothPitch, -smoothYaw, smoothRoll, 'ZYX');
-    droneGroup.position.y = smoothAlt + droneGroundOffset;
+    droneGroup.position.y = smoothAlt + droneGroundOffset + terrainElevation;
 
     // ── GPS position → XZ world ──────────────────────────────────────────
     if (homeLat !== null && t.position.lat !== 0) {
@@ -2451,6 +2524,7 @@ function animate() {
     // ── Shadow blob (scales down with altitude) ───────────────────────────
     const shadowScale = Math.max(0.15, 1 - smoothAlt / 100);
     shadowBlob.position.x = droneGroup.position.x;
+    shadowBlob.position.y = terrainElevation + 0.2;
     shadowBlob.position.z = droneGroup.position.z;
     shadowBlob.scale.setScalar(shadowScale * 5);
     shadowMat.opacity = shadowScale * 0.3;
