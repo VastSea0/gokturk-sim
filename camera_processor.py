@@ -22,20 +22,23 @@ import base64
 import queue
 import threading
 import time
+import argparse
 
-# Configuration
-# True: Streams camera frames from the simulation console running locally on port 8080.
-# False: Uses the native camera device (e.g. Raspberry Pi HQ Camera / picamera / USB Webcam).
+# Configuration (defaults, can be overridden by command-line arguments)
 USE_SIMULATOR = True
-SIMULATOR_URL = "http://localhost:8080/camera/stream"
+SIMULATOR_HOST = "localhost:8080"
 CAMERA_DEVICE_INDEX = 0  # Used when USE_SIMULATOR = False
+NO_GUI = False
+DETECT_ONLY = False
 
 # Queues for offloading network requests to keep OpenCV loop at 30+ FPS
 frame_queue = queue.Queue(maxsize=1)
 detection_queue = queue.Queue(maxsize=20)
 
 def send_detection(color, x, y):
-    url = "http://localhost:8080/api/target_detection"
+    if DETECT_ONLY:
+        return
+    url = f"http://{SIMULATOR_HOST}/api/target_detection"
     data = json.dumps({"color": color, "x": x, "y": y}).encode('utf-8')
     req = urllib.request.Request(
         url,
@@ -50,6 +53,8 @@ def send_detection(color, x, y):
         pass
 
 def send_frame(frame):
+    if DETECT_ONLY:
+        return
     # Encode frame to JPEG
     ret, buffer = cv2.imencode('.jpg', frame)
     if not ret:
@@ -58,7 +63,7 @@ def send_frame(frame):
     base64_str = base64.b64encode(buffer).decode('utf-8')
     data_url = f"data:image/jpeg;base64,{base64_str}"
     
-    url = "http://localhost:8080/api/processed_frame"
+    url = f"http://{SIMULATOR_HOST}/api/processed_frame"
     req = urllib.request.Request(
         url,
         data=data_url.encode('utf-8'),
@@ -93,6 +98,8 @@ def sender_worker():
             pass
 
 def queue_detection(color, x, y):
+    if DETECT_ONLY:
+        return
     try:
         detection_queue.put_nowait((color, x, y))
     except queue.Full:
@@ -179,129 +186,213 @@ def detect_colored_squares(frame):
                 
     return frame
 
+def parse_arguments():
+    global USE_SIMULATOR, SIMULATOR_HOST, CAMERA_DEVICE_INDEX, NO_GUI, DETECT_ONLY
+    
+    parser = argparse.ArgumentParser(
+        description="Göktürk UAV - Raspberry Pi 5 Target Detection & Camera Processor",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
+    
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument(
+        "--camera", action="store_true",
+        help="Use native hardware camera device instead of simulator stream."
+    )
+    group.add_argument(
+        "--sim", action="store_true",
+        help="Use simulator stream."
+    )
+    
+    parser.add_argument(
+        "--device", type=int, default=CAMERA_DEVICE_INDEX,
+        help="Camera device index (for hardware camera mode)."
+    )
+    parser.add_argument(
+        "--host", type=str, default=SIMULATOR_HOST,
+        help="Simulator host address (IP:port or domain:port)."
+    )
+    parser.add_argument(
+        "--no-gui", action="store_true",
+        help="Run in headless mode (no window display, useful over SSH / headless Pi)."
+    )
+    parser.add_argument(
+        "--detect-only", action="store_true",
+        help="Run detection locally without sending frames or data back to simulator."
+    )
+    
+    args = parser.parse_args()
+    
+    if args.camera:
+        USE_SIMULATOR = False
+    elif args.sim:
+        USE_SIMULATOR = True
+        
+    CAMERA_DEVICE_INDEX = args.device
+    SIMULATOR_HOST = args.host
+    NO_GUI = args.no_gui
+    DETECT_ONLY = args.detect_only
+
 def main():
+    parse_arguments()
+    
+    SIMULATOR_URL = f"http://{SIMULATOR_HOST}/camera/stream"
+    
     print("==================================================")
     print(" Göktürk UAV - Raspberry Pi 5 Python Camera Stream")
     print("==================================================")
-    
+    print(f"[CONFIG] Mode: {'Simulator' if USE_SIMULATOR else 'Hardware Camera'}")
     if USE_SIMULATOR:
-        print(f"[CAM] Connecting to simulator stream via zero-lag parser: {SIMULATOR_URL}")
-        try:
-            # Open request with a reasonable timeout
-            stream = urllib.request.urlopen(SIMULATOR_URL, timeout=5)
-        except Exception as e:
-            print(f"[ERROR] Could not connect to stream: {e}")
-            print("Please ensure that 'node server.js' is running, and the flight console is open in the browser.")
-            sys.exit(1)
-            
-        print("[SUCCESS] Video stream opened successfully.")
-        print("[INFO] Press 'q' key in the pop-up window to exit.")
-
-        # Start network sender thread
-        t = threading.Thread(target=sender_worker, daemon=True)
-        t.start()
-
-        bytes_buffer = b''
-        while True:
+        print(f"[CONFIG] Simulator URL: {SIMULATOR_URL}")
+    else:
+        print(f"[CONFIG] Camera Device Index: {CAMERA_DEVICE_INDEX}")
+    print(f"[CONFIG] Headless (No GUI): {NO_GUI}")
+    print(f"[CONFIG] Local Detect Only: {DETECT_ONLY}")
+    print("==================================================")
+    
+    try:
+        if USE_SIMULATOR:
+            print(f"[CAM] Connecting to simulator stream via zero-lag parser: {SIMULATOR_URL}")
             try:
-                chunk = stream.read(8192)
-                if not chunk:
-                    print("[WARN] Empty chunk received. Stream ended?")
+                # Open request with a reasonable timeout
+                stream = urllib.request.urlopen(SIMULATOR_URL, timeout=5)
+            except Exception as e:
+                print(f"[ERROR] Could not connect to stream: {e}")
+                print("Please ensure that 'node server.js' is running, and the flight console is open in the browser.")
+                sys.exit(1)
+                
+            print("[SUCCESS] Video stream opened successfully.")
+            if not NO_GUI:
+                print("[INFO] Press 'q' key in the pop-up window to exit.")
+            else:
+                print("[INFO] Headless mode active. Press Ctrl+C to exit.")
+
+            # Start network sender thread
+            if not DETECT_ONLY:
+                t = threading.Thread(target=sender_worker, daemon=True)
+                t.start()
+
+            bytes_buffer = b''
+            while True:
+                try:
+                    chunk = stream.read(8192)
+                    if not chunk:
+                        print("[WARN] Empty chunk received. Stream ended?")
+                        time.sleep(1)
+                        continue
+                    bytes_buffer += chunk
+                except Exception as e:
+                    print(f"[WARN] Connection error during read: {e}. Reconnecting...")
+                    time.sleep(1)
+                    try:
+                        stream = urllib.request.urlopen(SIMULATOR_URL, timeout=5)
+                        bytes_buffer = b''
+                    except Exception:
+                        pass
+                    continue
+                    
+                # Search for start and end of JPEG frame
+                a = bytes_buffer.find(b'\xff\xd8')
+                b = bytes_buffer.find(b'\xff\xd9')
+                if a != -1 and b != -1 and a < b:
+                    jpg_data = bytes_buffer[a:b+2]
+                    bytes_buffer = bytes_buffer[b+2:]
+                    
+                    # Decode frame
+                    frame = cv2.imdecode(np.frombuffer(jpg_data, dtype=np.uint8), cv2.IMREAD_COLOR)
+                    if frame is None:
+                        continue
+                    
+                    # Run detection pipeline
+                    processed_frame = detect_colored_squares(frame)
+                    
+                    # Push processed frame to queue (non-blocking, drop oldest if full)
+                    if not DETECT_ONLY:
+                        try:
+                            frame_queue.put_nowait(processed_frame)
+                        except queue.Full:
+                            try:
+                                frame_queue.get_nowait()
+                                frame_queue.put_nowait(processed_frame)
+                            except Exception:
+                                pass
+                    
+                    # Display the processed frame
+                    if not NO_GUI:
+                        cv2.imshow("Raspberry Pi 5 HQ Camera Output (Processed)", processed_frame)
+                        if cv2.waitKey(1) & 0xFF == ord('q'):
+                            break
+                    else:
+                        time.sleep(0.01)
+                elif a != -1 and b != -1 and b < a:
+                    # Discard corrupted bytes up to the start marker
+                    bytes_buffer = bytes_buffer[a:]
+                    
+            if not NO_GUI:
+                cv2.destroyAllWindows()
+            print("[CAM] Stream closed. Exiting.")
+            
+        else:
+            print(f"[CAM] Connecting to hardware camera index: {CAMERA_DEVICE_INDEX}")
+            cap = cv2.VideoCapture(CAMERA_DEVICE_INDEX)
+            
+            if not cap.isOpened():
+                print("[ERROR] Could not open video source.")
+                sys.exit(1)
+
+            print("[SUCCESS] Video stream opened successfully.")
+            if not NO_GUI:
+                print("[INFO] Press 'q' key in the pop-up window to exit.")
+            else:
+                print("[INFO] Headless mode active. Press Ctrl+C to exit.")
+
+            # Start network sender thread
+            if not DETECT_ONLY:
+                t = threading.Thread(target=sender_worker, daemon=True)
+                t.start()
+
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    print("[WARN] Failed to retrieve frame. Retrying...")
                     time.sleep(1)
                     continue
-                bytes_buffer += chunk
-            except Exception as e:
-                print(f"[WARN] Connection error during read: {e}. Reconnecting...")
-                time.sleep(1)
-                try:
-                    stream = urllib.request.urlopen(SIMULATOR_URL, timeout=5)
-                    bytes_buffer = b''
-                except Exception:
-                    pass
-                continue
-                
-            # Search for start and end of JPEG frame
-            a = bytes_buffer.find(b'\xff\xd8')
-            b = bytes_buffer.find(b'\xff\xd9')
-            if a != -1 and b != -1 and a < b:
-                jpg_data = bytes_buffer[a:b+2]
-                bytes_buffer = bytes_buffer[b+2:]
-                
-                # Decode frame
-                frame = cv2.imdecode(np.frombuffer(jpg_data, dtype=np.uint8), cv2.IMREAD_COLOR)
-                if frame is None:
-                    continue
-                
+                    
                 # Run detection pipeline
                 processed_frame = detect_colored_squares(frame)
                 
                 # Push processed frame to queue (non-blocking, drop oldest if full)
-                try:
-                    frame_queue.put_nowait(processed_frame)
-                except queue.Full:
+                if not DETECT_ONLY:
                     try:
-                        frame_queue.get_nowait()
                         frame_queue.put_nowait(processed_frame)
-                    except Exception:
-                        pass
+                    except queue.Full:
+                        try:
+                            frame_queue.get_nowait()
+                            frame_queue.put_nowait(processed_frame)
+                        except Exception:
+                            pass
                 
                 # Display the processed frame
-                cv2.imshow("Raspberry Pi 5 HQ Camera Output (Processed)", processed_frame)
-                
-                if cv2.waitKey(1) & 0xFF == ord('q'):
-                    break
-            elif a != -1 and b != -1 and b < a:
-                # Discard corrupted bytes up to the start marker
-                bytes_buffer = bytes_buffer[a:]
-                
-        cv2.destroyAllWindows()
-        print("[CAM] Stream closed. Exiting.")
-        
-    else:
-        print(f"[CAM] Connecting to hardware camera index: {CAMERA_DEVICE_INDEX}")
-        cap = cv2.VideoCapture(CAMERA_DEVICE_INDEX)
-        
-        if not cap.isOpened():
-            print("[ERROR] Could not open video source.")
-            sys.exit(1)
-
-        print("[SUCCESS] Video stream opened successfully.")
-        print("[INFO] Press 'q' key in the pop-up window to exit.")
-
-        # Start network sender thread
-        t = threading.Thread(target=sender_worker, daemon=True)
-        t.start()
-
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                print("[WARN] Failed to retrieve frame. Retrying...")
-                cv2.waitKey(1000)
-                continue
-                
-            # Run detection pipeline
-            processed_frame = detect_colored_squares(frame)
+                if not NO_GUI:
+                    cv2.imshow("Raspberry Pi 5 HQ Camera Output (Processed)", processed_frame)
+                    # Check for exit key
+                    if cv2.waitKey(1) & 0xFF == ord('q'):
+                        break
+                else:
+                    time.sleep(0.01)
+                    
+            cap.release()
+            if not NO_GUI:
+                cv2.destroyAllWindows()
+            print("[CAM] Stream closed. Exiting.")
             
-            # Push processed frame to queue (non-blocking, drop oldest if full)
-            try:
-                frame_queue.put_nowait(processed_frame)
-            except queue.Full:
-                try:
-                    frame_queue.get_nowait()
-                    frame_queue.put_nowait(processed_frame)
-                except Exception:
-                    pass
-            
-            # Display the processed frame
-            cv2.imshow("Raspberry Pi 5 HQ Camera Output (Processed)", processed_frame)
-            
-            # Check for exit key
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
-                
-        cap.release()
-        cv2.destroyAllWindows()
-        print("[CAM] Stream closed. Exiting.")
+    except KeyboardInterrupt:
+        print("\n[INFO] Interrupted by user. Exiting gracefully...")
+        if 'cap' in locals() and cap.isOpened():
+            cap.release()
+        if not NO_GUI:
+            cv2.destroyAllWindows()
+        sys.exit(0)
 
 if __name__ == "__main__":
     main()
