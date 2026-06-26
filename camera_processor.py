@@ -23,6 +23,7 @@ import queue
 import threading
 import time
 import argparse
+from camera_utils import open_camera
 
 # Configuration (defaults, can be overridden by command-line arguments)
 USE_SIMULATOR = True
@@ -233,6 +234,8 @@ def parse_arguments():
     NO_GUI = args.no_gui
     DETECT_ONLY = args.detect_only
 
+
+
 def main():
     parse_arguments()
     
@@ -334,10 +337,12 @@ def main():
             
         else:
             print(f"[CAM] Connecting to hardware camera index: {CAMERA_DEVICE_INDEX}")
-            cap = cv2.VideoCapture(CAMERA_DEVICE_INDEX)
+            cap = open_camera(CAMERA_DEVICE_INDEX)
             
-            if not cap.isOpened():
-                print("[ERROR] Could not open video source.")
+            if cap is None or not cap.isOpened():
+                print("[ERROR] Could not open video source via any backend (libcamerasrc, V4L2, default).")
+                print("If you are using a Raspberry Pi Camera Module, ensure it is enabled in /boot/firmware/config.txt")
+                print("If you are using a USB camera, make sure it is plugged in and check 'ls /dev/video*'.")
                 sys.exit(1)
 
             print("[SUCCESS] Video stream opened successfully.")

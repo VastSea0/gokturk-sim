@@ -66,6 +66,16 @@ for arg in "$@"; do
     fi
 done
 
+# Set default script to execute
+target_script="camera_processor.py"
+
+# If the first argument ends with .py, treat it as the target script to execute
+if [[ "${args[0]}" == *.py ]]; then
+    target_script="${args[0]}"
+    # Remove the script name from the forwarded arguments array
+    args=("${args[@]:1}")
+fi
+
 # Determine if we need to use the virtual environment
 if [ -d "venv" ] && [ -f "venv/bin/activate" ]; then
     source venv/bin/activate
@@ -74,7 +84,7 @@ fi
 # Check if python dependencies are available
 if python3 -c "import cv2, numpy" 2>/dev/null; then
     # Run the Python script directly, forwarding all cleaned command-line arguments
-    python3 camera_processor.py "${args[@]}"
+    python3 "$target_script" "${args[@]}"
 else
     # Dependencies are missing
     echo -e "${YELLOW}[WARN] OpenCV or Numpy not found in Python environment.${NC}"
@@ -88,7 +98,7 @@ else
         if [ -d "venv" ] && [ -f "venv/bin/activate" ]; then
             source venv/bin/activate
         fi
-        python3 camera_processor.py "${args[@]}"
+        python3 "$target_script" "${args[@]}"
     else
         echo -e "${RED}[ERROR] Cannot run camera processor without dependencies. Exiting.${NC}"
         exit 1
