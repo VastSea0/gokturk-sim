@@ -58,6 +58,14 @@ if [ "$1" = "--setup" ] || [ "$1" = "-s" ] || [ "$1" = "--install" ]; then
     exit 0
 fi
 
+# Clean arguments: remove standalone '--' if present (e.g. npm/yarn style separators)
+args=()
+for arg in "$@"; do
+    if [ "$arg" != "--" ]; then
+        args+=("$arg")
+    fi
+done
+
 # Determine if we need to use the virtual environment
 if [ -d "venv" ] && [ -f "venv/bin/activate" ]; then
     source venv/bin/activate
@@ -65,8 +73,8 @@ fi
 
 # Check if python dependencies are available
 if python3 -c "import cv2, numpy" 2>/dev/null; then
-    # Run the Python script directly, forwarding all command-line arguments
-    python3 camera_processor.py "$@"
+    # Run the Python script directly, forwarding all cleaned command-line arguments
+    python3 camera_processor.py "${args[@]}"
 else
     # Dependencies are missing
     echo -e "${YELLOW}[WARN] OpenCV or Numpy not found in Python environment.${NC}"
@@ -80,7 +88,7 @@ else
         if [ -d "venv" ] && [ -f "venv/bin/activate" ]; then
             source venv/bin/activate
         fi
-        python3 camera_processor.py "$@"
+        python3 camera_processor.py "${args[@]}"
     else
         echo -e "${RED}[ERROR] Cannot run camera processor without dependencies. Exiting.${NC}"
         exit 1
