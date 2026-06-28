@@ -31,3 +31,6 @@ npm-debug.log*
 
 # Video / Large binaries
 *.mp4
+
+# Temporary scratch scripts
+uav_marker_detection/scratch/
