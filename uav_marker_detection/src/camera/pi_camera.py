@@ -47,9 +47,15 @@ class PiCameraSource:
         if frame is None:
             return None
         if len(frame.shape) == 3 and frame.shape[2] == 4:
-            return cv2.cvtColor(frame, cv2.COLOR_RGBA2BGR)
-        if self.output_format.startswith("RGB"):
+            frame = frame[:, :, :3]
+            
+        # Due to picamera2/libcamera packaging/driver quirks:
+        # - "RGB888" config actually returns BGR-ordered array data.
+        # - "BGR888" config actually returns RGB-ordered array data.
+        if self.output_format.startswith("BGR"):
             return cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+        
+        # For "RGB888" it is already BGR, return directly.
         return frame
 
     def release(self) -> None:
