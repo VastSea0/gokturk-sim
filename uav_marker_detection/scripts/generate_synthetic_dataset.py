@@ -20,6 +20,7 @@ COLORS_BGR = {
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate synthetic YOLO data for red/blue square markers")
+    parser.add_argument("--task", choices=["detect", "segment"], default="detect")
     parser.add_argument("--output", default="synthetic_marker_dataset")
     parser.add_argument("--count", type=int, default=600)
     parser.add_argument("--width", type=int, default=640)
@@ -85,6 +86,15 @@ def apply_augmentations(image: np.ndarray) -> np.ndarray:
     if random.random() < 0.35:
         k = random.choice([3, 5])
         image = cv2.GaussianBlur(image, (k, k), 0)
+    if random.random() < 0.35:
+        k = random.choice([5, 7, 9])
+        kernel = np.zeros((k, k), dtype=np.float32)
+        if random.random() < 0.5:
+            kernel[k // 2, :] = 1.0
+        else:
+            kernel[:, k // 2] = 1.0
+        kernel = kernel / max(1.0, kernel.sum())
+        image = cv2.filter2D(image, -1, kernel)
     if random.random() < 0.45:
         overlay = image.copy()
         x1 = random.randint(0, image.shape[1] - 1)
@@ -101,6 +111,14 @@ def yolo_label(cls_id: int, bbox: Tuple[int, int, int, int], width: int, height:
     bw = (x2 - x1) / width
     bh = (y2 - y1) / height
     return f"{cls_id} {xc:.6f} {yc:.6f} {bw:.6f} {bh:.6f}"
+
+
+def yolo_seg_label(cls_id: int, polygon: np.ndarray, width: int, height: int) -> str:
+    points = []
+    for point in polygon.reshape(-1, 2):
+        points.append(f"{float(point[0]) / width:.6f}")
+        points.append(f"{float(point[1]) / height:.6f}")
+    return f"{cls_id} " + " ".join(points)
 
 
 def split_name(index: int, count: int, val_ratio: float, test_ratio: float) -> str:
@@ -132,7 +150,10 @@ def main() -> int:
             polygon, bbox = random_marker_polygon(args.width, args.height)
             cv2.fillConvexPoly(image, polygon, COLORS_BGR[cls_id])
             cv2.polylines(image, [polygon], True, (245, 245, 245), random.choice([1, 2]))
-            labels.append(yolo_label(cls_id, bbox, args.width, args.height))
+            if args.task == "segment":
+                labels.append(yolo_seg_label(cls_id, polygon, args.width, args.height))
+            else:
+                labels.append(yolo_label(cls_id, bbox, args.width, args.height))
         image = apply_augmentations(image)
 
         stem = f"synthetic_{out_index:06d}"
@@ -141,6 +162,7 @@ def main() -> int:
 
     data_yaml = (
         f"path: {root.resolve()}\n"
+        f"# task: {args.task}\n"
         "train: images/train\n"
         "val: images/val\n"
         "test: images/test\n"

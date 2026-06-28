@@ -8,6 +8,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train a lightweight YOLO marker detector")
     parser.add_argument("--data", required=True, help="YOLO data.yaml path")
     parser.add_argument("--model", default="yolov8n.pt", help="Base model, e.g. yolov8n.pt or yolo11n.pt")
+    parser.add_argument("--task", choices=["detect", "segment"], default="detect")
     parser.add_argument("--epochs", type=int, default=80)
     parser.add_argument("--imgsz", type=int, default=640)
     parser.add_argument("--batch", type=int, default=16)
@@ -33,10 +34,10 @@ def main() -> int:
         device=args.device,
         project=args.project,
         name=args.name,
+        task=args.task,
     )
     return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

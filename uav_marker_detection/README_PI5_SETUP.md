@@ -43,13 +43,13 @@ Picamera2 yolunu test:
 
 ```bash
 source .venv/bin/activate
-python3 src/main.py --config config/default.yaml --detector hsv --source pi --max-frames 50 --print-empty
+python3 src/main.py --config config/default.yaml --detector color --source pi --max-frames 50 --print-empty
 ```
 
 Debug penceresi gerekiyorsa masaüstü oturumunda:
 
 ```bash
-python3 src/main.py --config config/default.yaml --detector hsv --source pi --show
+python3 src/main.py --config config/default.yaml --detector color --source pi --show --draw-debug
 ```
 
 Headless SSH kullanımında `--show` kullanmayın.
@@ -60,14 +60,14 @@ GUI kamera testi:
 python3 src/gui/app.py --config config/default.yaml
 ```
 
-Arayüzde `Run settings` panelinde `Camera + processing`, kaynak olarak `pi`, detector olarak `hsv` seçin ve `Start` düğmesine basın.
+Arayüzde `Run settings` panelinde `Camera + processing`, kaynak olarak `pi`, detector olarak `color` seçin ve `Start` düğmesine basın. Maviyi debug etmek için `Debug view` alanında `mask_blue` veya `mask_overlay` seçin.
 
-## 4. HSV Detector Çalıştırma
+## 4. Detector Çalıştırma
 
 Temel çalışma:
 
 ```bash
-./scripts/run_pi5.sh --config config/default.yaml --detector hsv --source pi
+./scripts/run_pi5.sh --config config/default.yaml --detector color --source pi
 ```
 
 Düşük CPU kullanımı için:
@@ -77,22 +77,55 @@ Düşük CPU kullanımı için:
 - `debug.draw` ve `debug.show_window` kapalı kalsın.
 - `processing.max_fps` değerini 10-20 arası kullanın.
 
-HSV ayarları:
+HSV fallback:
+
+```bash
+./scripts/run_pi5.sh --config config/default.yaml --detector hsv --source pi
+```
+
+Mavi mask debug:
+
+```bash
+python3 src/main.py --config config/default.yaml --detector color --source pi --draw-debug --debug-view mask_blue --show
+```
+
+Color detector ayarları:
 
 ```yaml
 detection:
-  hsv:
-    red_ranges:
+  color:
+    red_hsv_ranges:
       - lower: [0, 90, 70]
         upper: [10, 255, 255]
-      - lower: [170, 90, 70]
+      - lower: [160, 45, 35]
         upper: [179, 255, 255]
-    blue_ranges:
-      - lower: [95, 80, 50]
-        upper: [135, 255, 255]
+    blue_hsv_ranges:
+      - lower: [82, 35, 25]
+        upper: [148, 255, 255]
 ```
 
 Farklı ışık koşullarında bu değerleri gerçek görüntülerle ayarlayın.
+
+Pi 5 FPS beklentisi:
+
+- `color`: 15-30 FPS hedeflenir.
+- `yolo` nano `imgsz=320`: yaklaşık 6-12 FPS.
+- `yolo_seg` nano `imgsz=320`: yaklaşık 3-8 FPS.
+
+Gerçek değerler soğutma, exposure, model export formatı ve GUI kullanımına bağlıdır.
+
+Renk kararlılığı için kamera kontrolü:
+
+```yaml
+camera:
+  controls:
+    awb_enable: true
+    ae_enable: true
+    exposure_time_us: null
+    analogue_gain: null
+```
+
+İlk testte otomatik exposure/white balance açık kalabilir. Eşik veya model validasyonu yapılırken aynı sahnede renklerin zıpladığını görürseniz iyi pozlanmış değerleri bulup `awb_enable: false`, `ae_enable: false`, `exposure_time_us` ve `analogue_gain` ile kilitleyin.
 
 ## 5. MAVLink / Pixhawk / QGroundControl
 
@@ -109,13 +142,13 @@ communication:
 UDP örnek:
 
 ```bash
-python3 src/main.py --config config/default.yaml --detector hsv --source pi --mavlink udpout:127.0.0.1:14550
+python3 src/main.py --config config/default.yaml --detector color --source pi --mavlink udpout:127.0.0.1:14550
 ```
 
 QGroundControl tarafında marker özetleri `STATUSTEXT` olarak görülebilir. Daha zengin entegrasyon için UDP JSON çıkışını bir ground-station uygulaması okuyabilir:
 
 ```bash
-python3 src/main.py --config config/default.yaml --detector hsv --source pi --udp-host 127.0.0.1 --udp-port 15000
+python3 src/main.py --config config/default.yaml --detector color --source pi --udp-host 127.0.0.1 --udp-port 15000
 ```
 
 İleri MAVLink seçenekleri:
@@ -138,7 +171,7 @@ python3 src/gui/app.py --config config/default.yaml
 
 Arayüz modları:
 
-- `Camera + processing`: canlı görüntü ve HSV/YOLO tespit.
+- `Camera + processing`: canlı görüntü ve color/HSV/YOLO/YOLO-seg tespit.
 - `Camera + JSON log`: tespitleri JSONL dosyasına yazar.
 - `Camera + UDP output`: tespitleri UDP JSON olarak yollar.
 - `Camera + Pixhawk/MAVLink`: Pixhawk telemetry okur ve marker özetini güvenli `STATUSTEXT` ile gönderebilir.
@@ -199,7 +232,7 @@ PX4 parametrelerinde ilgili telem port baud ayarı QGroundControl üzerinden kon
 UDP/SITL testi:
 
 ```bash
-python3 src/main.py --config config/default.yaml --detector hsv --source video --video sample_data/test.mp4 --mavlink udpout:127.0.0.1:14550
+python3 src/main.py --config config/default.yaml --detector color --source video --video sample_data/test.mp4 --mavlink udpout:127.0.0.1:14550
 ```
 
 GUI'de UDP testi:

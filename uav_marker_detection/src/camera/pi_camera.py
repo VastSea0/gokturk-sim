@@ -26,11 +26,12 @@ class PiCameraSource:
         width = int(self.config.get("width", 640))
         height = int(self.config.get("height", 480))
         fps = int(self.config.get("fps", 20))
+        controls = self._camera_controls(fps)
 
         self.picam2 = Picamera2()
         video_config = self.picam2.create_video_configuration(
             main={"size": (width, height), "format": self.output_format},
-            controls={"FrameRate": fps},
+            controls=controls,
         )
         self.picam2.configure(video_config)
         self.picam2.start()
@@ -63,3 +64,16 @@ class PiCameraSource:
             self.picam2.stop()
             self.picam2.close()
             self.picam2 = None
+
+    def _camera_controls(self, fps: int) -> Dict[str, Any]:
+        controls: Dict[str, Any] = {"FrameRate": fps}
+        control_cfg = self.config.get("controls", {}) or {}
+        if "awb_enable" in control_cfg:
+            controls["AwbEnable"] = bool(control_cfg["awb_enable"])
+        if "ae_enable" in control_cfg:
+            controls["AeEnable"] = bool(control_cfg["ae_enable"])
+        if "exposure_time_us" in control_cfg and control_cfg["exposure_time_us"]:
+            controls["ExposureTime"] = int(control_cfg["exposure_time_us"])
+        if "analogue_gain" in control_cfg and control_cfg["analogue_gain"]:
+            controls["AnalogueGain"] = float(control_cfg["analogue_gain"])
+        return controls

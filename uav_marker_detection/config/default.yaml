@@ -2,22 +2,54 @@ camera:
   width: 640
   height: 480
   fps: 20
-  format: RGB888
+  format: BGR888
   warmup_frames: 5
+  controls:
+    # Leave auto modes on for first bring-up. For repeatable color tests,
+    # disable AE/AWB and set exposure_time_us/analogue_gain after calibration.
+    awb_enable: true
+    ae_enable: true
+    exposure_time_us: null
+    analogue_gain: null
 
 processing:
   resize_width: 640
   max_fps: 20
 
 detection:
+  color:
+    min_area_px: 220
+    max_area_fraction: 0.70
+    min_color_fill: 0.18
+    max_aspect_ratio: 7.0
+    blur_kernel_size: 3
+    morph_kernel_size: 5
+    morph_iterations: 2
+    max_markers_per_color: 12
+    use_clahe: true
+    red_hsv_ranges:
+      - lower: [0, 45, 35]
+        upper: [18, 255, 255]
+      - lower: [160, 45, 35]
+        upper: [179, 255, 255]
+    blue_hsv_ranges:
+      - lower: [82, 35, 25]
+        upper: [148, 255, 255]
+    red_dominance_min: 0.055
+    blue_dominance_min: 0.045
+    min_channel_value: 28
+    red_lab_a_min: 142
+    blue_lab_b_max: 122
   hsv:
     min_area_px: 400
     max_area_fraction: 0.65
-    aspect_ratio_min: 0.65
-    aspect_ratio_max: 1.35
-    approx_epsilon_factor: 0.04
-    require_quadrilateral: true
-    min_extent: 0.55
+    aspect_ratio_min: 0.25
+    aspect_ratio_max: 4.00
+    approx_epsilon_factor: 0.06
+    require_quadrilateral: false
+    min_vertices: 3
+    max_vertices: 10
+    min_extent: 0.20
     morph_kernel_size: 5
     morph_iterations: 1
     max_markers_per_color: 8
@@ -27,14 +59,33 @@ detection:
       - lower: [170, 90, 70]
         upper: [179, 255, 255]
     blue_ranges:
-      - lower: [95, 80, 50]
-        upper: [135, 255, 255]
+      - lower: [88, 45, 30]
+        upper: [148, 255, 255]
   yolo:
+    task: detect
+    weights_path: models/best.pt
     confidence_threshold: 0.35
+    iou_threshold: 0.45
     image_size: 320
     class_names:
       0: red_marker
       1: blue_marker
+  yolo_seg:
+    task: segment
+    weights_path: models/best-seg.pt
+    confidence_threshold: 0.30
+    iou_threshold: 0.45
+    image_size: 320
+    class_names:
+      0: red_marker
+      1: blue_marker
+
+tracking:
+  enabled: true
+  max_distance_px: 90
+  max_missed: 6
+  smoothing_alpha: 0.45
+  stale_confidence_decay: 0.65
 
 geometry:
   # MVP assumption: nadir-looking camera, flat ground, known altitude.
@@ -70,6 +121,7 @@ communication:
 
 debug:
   draw: false
+  view: overlay
   show_window: false
   save_debug_frames: false
   debug_frame_dir: logs/debug_frames

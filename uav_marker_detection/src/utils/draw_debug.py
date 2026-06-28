@@ -23,7 +23,15 @@ def draw_detections(
     for detection in detections:
         x1, y1, x2, y2 = detection.bbox_xyxy
         color = COLORS.get(detection.class_name, (0, 255, 255))
-        label = f"{detection.class_name} {detection.confidence:.2f}"
+        label_parts = [detection.class_name, f"{detection.confidence:.2f}"]
+        if detection.track_id is not None:
+            label_parts.append(f"id={detection.track_id}")
+        if detection.stale_frames:
+            label_parts.append(f"lost={detection.stale_frames}")
+        label = " ".join(label_parts)
+        if detection.mask_polygon:
+            polygon = np.array(detection.mask_polygon, dtype=np.int32).reshape((-1, 1, 2))
+            cv2.polylines(output, [polygon], True, color, 2)
         cv2.rectangle(output, (x1, y1), (x2, y2), color, 2)
         cv2.circle(output, (int(detection.center_px[0]), int(detection.center_px[1])), 4, color, -1)
         text_y = max(16, y1 - 8)
@@ -31,4 +39,3 @@ def draw_detections(
     if fps is not None:
         cv2.putText(output, f"FPS {fps:.1f}", (10, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
     return output
-

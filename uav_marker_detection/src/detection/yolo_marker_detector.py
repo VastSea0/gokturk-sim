@@ -14,7 +14,9 @@ class YOLOMarkerDetector:
         self.config = config or {}
         self.weights_path = weights_path
         self.confidence_threshold = float(self.config.get("confidence_threshold", 0.35))
+        self.iou_threshold = float(self.config.get("iou_threshold", 0.45))
         self.image_size = int(self.config.get("image_size", 320))
+        self.task = str(self.config.get("task", "detect"))
         self.class_names = {int(k): v for k, v in self.config.get("class_names", {0: "red_marker", 1: "blue_marker"}).items()}
 
         try:
@@ -28,7 +30,7 @@ class YOLOMarkerDetector:
         self.model = YOLO(weights_path)
 
     def detect(self, frame_bgr: np.ndarray) -> List[MarkerDetection]:
-        results = self.model(frame_bgr, imgsz=self.image_size, verbose=False)
+        results = self.model(frame_bgr, imgsz=self.image_size, conf=self.confidence_threshold, iou=self.iou_threshold, verbose=False)
         if not results:
             return []
 
@@ -37,7 +39,12 @@ class YOLOMarkerDetector:
         if boxes is None:
             return detections
 
-        for box in boxes:
+        masks = getattr(results[0], "masks", None)
+        polygons = []
+        if masks is not None and getattr(masks, "xy", None) is not None:
+            polygons = masks.xy
+
+        for index, box in enumerate(boxes):
             conf = float(box.conf[0])
             if conf < self.confidence_threshold:
                 continue
@@ -48,6 +55,9 @@ class YOLOMarkerDetector:
             xyxy = box.xyxy[0].detach().cpu().numpy().astype(float)
             x1, y1, x2, y2 = xyxy.tolist()
             area = max(0.0, (x2 - x1) * (y2 - y1))
+            polygon = None
+            if index < len(polygons):
+                polygon = [(float(point[0]), float(point[1])) for point in polygons[index]]
             detections.append(
                 MarkerDetection(
                     class_name=class_name,
@@ -56,6 +66,8 @@ class YOLOMarkerDetector:
                     center_px=bbox_center((x1, y1, x2, y2)),
                     area_px=area,
                     quality=clamp(conf),
+                    mask_polygon=polygon,
+                    detector_name="yolo_seg" if polygon else "yolo",
                 )
             )
 

@@ -2,7 +2,12 @@ camera:
   width: 640
   height: 480
   fps: 20
-  format: RGB888
+  format: BGR888
+  controls:
+    awb_enable: true
+    ae_enable: true
+    exposure_time_us: null
+    analogue_gain: null
 
 processing:
   resize_width: 640
@@ -11,4 +16,3 @@ processing:
 debug:
   draw: false
   show_window: false
-

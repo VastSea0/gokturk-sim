@@ -18,6 +18,10 @@ class MarkerDetection:
     center_px: Point
     area_px: float
     quality: float
+    track_id: Optional[int] = None
+    stale_frames: int = 0
+    mask_polygon: Optional[List[Point]] = None
+    detector_name: Optional[str] = None
 
     def as_dict(
         self,
@@ -32,10 +36,19 @@ class MarkerDetection:
             "center_px": [round(float(self.center_px[0]), 2), round(float(self.center_px[1]), 2)],
             "quality": round(float(self.quality), 4),
             "area_px": round(float(self.area_px), 2),
+            "stale_frames": int(self.stale_frames),
             "relative_position_m": relative_position_m
             or {"x_forward": None, "y_right": None, "z_down": None},
             "global_position": global_position or {"lat": None, "lon": None, "alt": None},
         }
+        if self.track_id is not None:
+            result["track_id"] = int(self.track_id)
+        if self.detector_name:
+            result["detector"] = self.detector_name
+        if self.mask_polygon:
+            result["mask_polygon"] = [
+                [round(float(point[0]), 2), round(float(point[1]), 2)] for point in self.mask_polygon
+            ]
         if local_position_ned_m is not None:
             result["local_position_ned_m"] = local_position_ned_m
         return result
@@ -56,4 +69,3 @@ def xywh_to_xyxy(x: float, y: float, w: float, h: float) -> BBox:
 def bbox_center(bbox: Sequence[float]) -> Point:
     x1, y1, x2, y2 = bbox
     return (float(x1 + x2) / 2.0, float(y1 + y2) / 2.0)
-

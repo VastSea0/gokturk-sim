@@ -35,9 +35,12 @@ class SettingsPanel(QtWidgets.QGroupBox):
         self.video_browse_button = QtWidgets.QPushButton("Browse")
 
         self.detector_combo = QtWidgets.QComboBox()
-        self.detector_combo.addItems(["hsv", "yolo"])
-        self.weights_edit = QtWidgets.QLineEdit("")
+        self.detector_combo.addItems(["color", "hsv", "yolo", "yolo_seg"])
+        yolo_cfg = config.get("detection", {}).get("yolo", {})
+        self.weights_edit = QtWidgets.QLineEdit(str(project_dir / yolo_cfg.get("weights_path", "models/best.pt")))
         self.weights_browse_button = QtWidgets.QPushButton("Browse")
+        self.debug_view_combo = QtWidgets.QComboBox()
+        self.debug_view_combo.addItems(["overlay", "mask_overlay", "mask_red", "mask_blue", "mask_combined"])
 
         json_cfg = config.get("communication", {}).get("json", {})
         udp_cfg = config.get("communication", {}).get("udp", {})
@@ -64,6 +67,7 @@ class SettingsPanel(QtWidgets.QGroupBox):
         form.addRow("Video", self._row(self.video_edit, self.video_browse_button))
         form.addRow("Detector", self.detector_combo)
         form.addRow("YOLO weights", self._row(self.weights_edit, self.weights_browse_button))
+        form.addRow("Debug view", self.debug_view_combo)
         form.addRow("", self.json_check)
         form.addRow("JSON path", self.json_path_edit)
         form.addRow("", self.udp_check)
@@ -111,6 +115,7 @@ class SettingsPanel(QtWidgets.QGroupBox):
                 "broadcast": False,
             },
             "draw": self.draw_check.isChecked(),
+            "debug_view": self.debug_view_combo.currentText(),
         }
 
     def _emit_start(self) -> None:
@@ -136,7 +141,7 @@ class SettingsPanel(QtWidgets.QGroupBox):
             self.udp_check.setChecked(False)
 
     def _detector_changed(self, text: str) -> None:
-        yolo_enabled = text == "yolo"
+        yolo_enabled = text in {"yolo", "yolo_seg"}
         self.weights_edit.setEnabled(yolo_enabled)
         self.weights_browse_button.setEnabled(yolo_enabled)
 

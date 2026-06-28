@@ -19,9 +19,11 @@ from camera.video_file_camera import VideoFileCamera
 from communication.json_logger import JSONLogger
 from communication.mavlink_bridge import MavlinkBridge
 from communication.udp_bridge import UDPJsonBridge
+from detection.adaptive_color_detector import AdaptiveColorMarkerDetector
 from detection.hsv_marker_detector import HSVMarkerDetector
 from detection.yolo_marker_detector import YOLOMarkerDetector
 from geometry.coordinate_transform import CameraGeometry, estimate_positions
+from tracking.centroid_tracker import CentroidTracker
 from utils.config_loader import get_nested, load_config
 from utils.draw_debug import draw_detections
 from utils.fps import FPSCounter
@@ -33,7 +35,7 @@ LOGGER = logging.getLogger("uav_marker_detection")
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="UAV red/blue ground marker detection for Raspberry Pi 5")
     parser.add_argument("--config", default="config/default.yaml", help="YAML config path")
-    parser.add_argument("--detector", choices=["hsv", "yolo"], default="hsv", help="Detector backend")
+    parser.add_argument("--detector", choices=["color", "hsv", "yolo", "yolo_seg"], default="color", help="Detector backend")
     parser.add_argument("--source", choices=["pi", "video"], default="pi", help="Input source")
     parser.add_argument("--video", help="Video path when --source video is used")
     parser.add_argument("--loop-video", action="store_true", help="Loop video input")
@@ -45,6 +47,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--udp-port", type=int, help="Enable UDP JSON output and set port")
     parser.add_argument("--show", action="store_true", help="Show OpenCV debug window")
     parser.add_argument("--draw-debug", action="store_true", help="Draw boxes on debug output")
+    parser.add_argument("--debug-view", choices=["overlay", "mask_overlay", "mask_red", "mask_blue", "mask_combined"], default="overlay")
+    parser.add_argument("--no-tracking", action="store_true", help="Disable temporal smoothing/tracking")
     parser.add_argument("--print-empty", action="store_true", help="Print frames even when no marker is detected")
     parser.add_argument("--max-frames", type=int, help="Stop after N frames, useful for tests")
     parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
@@ -52,12 +56,17 @@ def parse_args() -> argparse.Namespace:
 
 
 def build_detector(args: argparse.Namespace, config: Dict[str, Any]):
+    if args.detector == "color":
+        return AdaptiveColorMarkerDetector(get_nested(config, "detection.color", {}))
     if args.detector == "hsv":
         return HSVMarkerDetector(get_nested(config, "detection.hsv", {}))
     weights = args.weights
+    yolo_config = get_nested(config, "detection.yolo_seg" if args.detector == "yolo_seg" else "detection.yolo", {})
     if not weights:
-        raise ValueError("--weights is required when --detector yolo is selected")
-    return YOLOMarkerDetector(weights, get_nested(config, "detection.yolo", {}))
+        weights = yolo_config.get("weights_path")
+    if not weights:
+        raise ValueError("--weights or detection.*.weights_path is required when --detector yolo or yolo_seg is selected")
+    return YOLOMarkerDetector(weights, yolo_config)
 
 
 def build_source(args: argparse.Namespace, config: Dict[str, Any]):
@@ -118,6 +127,7 @@ def apply_cli_overrides(args: argparse.Namespace, config: Dict[str, Any]) -> Dic
     udp_cfg = communication.setdefault("udp", {})
     mav_cfg = communication.setdefault("mavlink", {})
     debug_cfg = config.setdefault("debug", {})
+    tracking_cfg = config.setdefault("tracking", {})
 
     if args.print_empty:
         console_cfg["print_empty_frames"] = True
@@ -140,6 +150,10 @@ def apply_cli_overrides(args: argparse.Namespace, config: Dict[str, Any]) -> Dic
         debug_cfg["draw"] = True
     if args.draw_debug:
         debug_cfg["draw"] = True
+    if args.debug_view:
+        debug_cfg["view"] = args.debug_view
+    if args.no_tracking:
+        tracking_cfg["enabled"] = False
     return config
 
 
@@ -162,6 +176,7 @@ def main() -> int:
     debug_cfg = get_nested(config, "debug", {})
     processing_cfg = get_nested(config, "processing", {})
     geometry_cfg = get_nested(config, "geometry", {})
+    tracking_cfg = get_nested(config, "tracking", {})
 
     json_logger = JSONLogger(json_cfg.get("path"), enabled=bool(json_cfg.get("enabled", False)))
     udp_bridge = UDPJsonBridge(
@@ -171,6 +186,14 @@ def main() -> int:
         broadcast=bool(udp_cfg.get("broadcast", False)),
     )
     mavlink_bridge = MavlinkBridge(mav_cfg)
+    tracker = None
+    if bool(tracking_cfg.get("enabled", True)):
+        tracker = CentroidTracker(
+            max_distance_px=float(tracking_cfg.get("max_distance_px", 90.0)),
+            max_missed=int(tracking_cfg.get("max_missed", 6)),
+            smoothing_alpha=float(tracking_cfg.get("smoothing_alpha", 0.45)),
+            stale_confidence_decay=float(tracking_cfg.get("stale_confidence_decay", 0.65)),
+        )
 
     frame_id = 0
     fps_counter = FPSCounter()
@@ -180,6 +203,7 @@ def main() -> int:
     resize_width = int(processing_cfg.get("resize_width", 0) or 0)
     show_window = bool(debug_cfg.get("show_window", False))
     draw_debug = bool(debug_cfg.get("draw", False))
+    debug_view = str(debug_cfg.get("view", "overlay"))
     print_empty = bool(console_cfg.get("print_empty_frames", False))
     save_debug_frames = bool(debug_cfg.get("save_debug_frames", False))
     debug_frame_interval = int(debug_cfg.get("debug_frame_interval", 30))
@@ -208,6 +232,8 @@ def main() -> int:
             frame = maybe_resize(frame, resize_width)
 
             detections = detector.detect(frame)
+            if tracker is not None:
+                detections = tracker.update(detections, frame_id)
             telemetry = mavlink_bridge.poll_telemetry()
             result = frame_result(frame_id, detections, frame.shape, geometry_cfg, telemetry)
 
@@ -219,6 +245,8 @@ def main() -> int:
 
             fps = fps_counter.update()
             debug_frame = frame
+            if draw_debug and debug_view != "overlay" and hasattr(detector, "debug_view"):
+                debug_frame = detector.debug_view(frame, debug_view)
             if draw_debug:
                 debug_frame = draw_detections(frame, detections, fps=fps)
             if save_debug_frames and draw_debug and frame_id % max(1, debug_frame_interval) == 0:
@@ -246,4 +274,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
