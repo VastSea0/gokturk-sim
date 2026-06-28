@@ -28,6 +28,11 @@ sudo apt-get install -y \
   libatlas-base-dev \
   libopenblas-dev
 
+echo "[INFO] Installing Qt GUI bindings"
+if ! sudo apt-get install -y python3-pyqt6; then
+  echo "[WARN] python3-pyqt6 was not available via apt. GUI can still run if PyQt6 or PySide6 is installed in the venv."
+fi
+
 sudo apt-get install -y rpicam-apps || sudo apt-get install -y libcamera-apps || true
 
 echo "[INFO] Creating Python virtualenv with system site packages"
@@ -63,4 +68,4 @@ PY
 
 echo "[DONE] Install complete"
 echo "Run: ./scripts/run_pi5.sh --config config/default.yaml --detector hsv --source pi"
-
+echo "GUI: python3 src/gui/app.py --config config/default.yaml"

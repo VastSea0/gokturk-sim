@@ -16,15 +16,17 @@ class MavlinkBridge:
     """
 
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
-        cfg = config or {}
-        self.enabled = bool(cfg.get("enabled", False))
-        self.connection_string = cfg.get("connection_string")
-        self.baud = int(cfg.get("baud", 57600))
-        self.heartbeat_timeout_s = float(cfg.get("heartbeat_timeout_s", 0))
-        self.send_statustext_enabled = bool(cfg.get("send_statustext", True))
-        self.statustext_min_interval_s = float(cfg.get("statustext_min_interval_s", 1.0))
+        self.enabled = False
+        self.connection_string = None
+        self.baud = 57600
+        self.heartbeat_timeout_s = 0.0
+        self.send_statustext_enabled = True
+        self.statustext_min_interval_s = 1.0
         self.master: Optional[Any] = None
         self.last_statustext_s = 0.0
+        self.last_message_s: Optional[float] = None
+        self.last_heartbeat_s: Optional[float] = None
+        self.last_error: Optional[str] = None
         self.telemetry: Dict[str, Any] = {
             "roll_rad": None,
             "pitch_rad": None,
@@ -37,18 +39,32 @@ class MavlinkBridge:
             "local_east_m": None,
             "local_down_m": None,
         }
+        self.configure(config or {})
+
+    def configure(self, config: Dict[str, Any]) -> None:
+        cfg = config or {}
+        self.enabled = bool(cfg.get("enabled", False))
+        self.connection_string = cfg.get("connection_string")
+        self.baud = int(cfg.get("baud", 57600))
+        self.heartbeat_timeout_s = float(cfg.get("heartbeat_timeout_s", 0))
+        self.send_statustext_enabled = bool(cfg.get("send_statustext", True))
+        self.statustext_min_interval_s = float(cfg.get("statustext_min_interval_s", 1.0))
+        self.last_error = None
 
     def connect(self) -> None:
+        self.close()
         if not self.enabled:
             return
         if not self.connection_string:
-            LOGGER.warning("MAVLink enabled but connection_string is empty; continuing without MAVLink.")
+            self.last_error = "MAVLink connection string is empty"
+            LOGGER.warning("%s; continuing without MAVLink.", self.last_error)
             self.enabled = False
             return
         try:
             from pymavlink import mavutil
         except ImportError:
-            LOGGER.warning("pymavlink is not installed; continuing without MAVLink.")
+            self.last_error = "pymavlink is not installed"
+            LOGGER.warning("%s; continuing without MAVLink.", self.last_error)
             self.enabled = False
             return
 
@@ -60,10 +76,15 @@ class MavlinkBridge:
                 source_component=191,
             )
             if self.heartbeat_timeout_s > 0:
-                self.master.wait_heartbeat(timeout=self.heartbeat_timeout_s)
+                heartbeat = self.master.wait_heartbeat(timeout=self.heartbeat_timeout_s)
+                if heartbeat is not None:
+                    now = time.monotonic()
+                    self.last_heartbeat_s = now
+                    self.last_message_s = now
             LOGGER.info("MAVLink bridge connected: %s", self.connection_string)
         except Exception as exc:
-            LOGGER.warning("Could not open MAVLink connection %s: %s", self.connection_string, exc)
+            self.last_error = f"Could not open MAVLink connection {self.connection_string}: {exc}"
+            LOGGER.warning("%s", self.last_error)
             self.master = None
             self.enabled = False
 
@@ -78,6 +99,10 @@ class MavlinkBridge:
             msg_type = msg.get_type()
             if msg_type == "BAD_DATA":
                 continue
+            now = time.monotonic()
+            self.last_message_s = now
+            if msg_type == "HEARTBEAT":
+                self.last_heartbeat_s = now
             if msg_type == "ATTITUDE":
                 self.telemetry["roll_rad"] = float(msg.roll)
                 self.telemetry["pitch_rad"] = float(msg.pitch)
@@ -94,6 +119,31 @@ class MavlinkBridge:
             elif msg_type == "VFR_HUD" and self.telemetry.get("alt_m") is None:
                 self.telemetry["alt_m"] = float(msg.alt)
         return dict(self.telemetry)
+
+    def is_link_open(self) -> bool:
+        return self.enabled and self.master is not None
+
+    def has_recent_heartbeat(self, timeout_s: float = 3.0) -> bool:
+        if self.last_heartbeat_s is None:
+            return False
+        return (time.monotonic() - self.last_heartbeat_s) <= timeout_s
+
+    def status(self) -> Dict[str, Any]:
+        return {
+            "enabled": self.enabled,
+            "link_open": self.is_link_open(),
+            "connected": self.has_recent_heartbeat(),
+            "connection_string": self.connection_string,
+            "baud": self.baud,
+            "last_message_age_s": self._age(self.last_message_s),
+            "last_heartbeat_age_s": self._age(self.last_heartbeat_s),
+            "last_error": self.last_error,
+        }
+
+    def _age(self, timestamp_s: Optional[float]) -> Optional[float]:
+        if timestamp_s is None:
+            return None
+        return max(0.0, time.monotonic() - timestamp_s)
 
     def send_detection_summary(self, result: Dict[str, Any]) -> None:
         if not self.enabled or self.master is None or not self.send_statustext_enabled:
@@ -126,4 +176,15 @@ class MavlinkBridge:
             LOGGER.debug("STATUSTEXT send failed: %s", exc)
 
     def close(self) -> None:
+        if self.master is not None:
+            try:
+                self.master.close()
+            except Exception:
+                pass
         self.master = None
+        self.last_message_s = None
+        self.last_heartbeat_s = None
+
+    def disconnect(self) -> None:
+        self.close()
+        self.enabled = False

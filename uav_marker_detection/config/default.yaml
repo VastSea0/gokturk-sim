@@ -75,3 +75,6 @@ debug:
   debug_frame_dir: logs/debug_frames
   debug_frame_interval: 30
 
+gui:
+  update_interval_ms: 33
+  default_video: sample_data/test.mp4

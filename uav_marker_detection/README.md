@@ -15,6 +15,7 @@ uav_marker_detection/
     detection/            # HSV MVP ve opsiyonel YOLO detector
     geometry/             # Piksel -> relatif/global koordinat dönüşümü
     communication/        # JSONL, UDP JSON, MAVLink STATUSTEXT bridge
+    gui/                  # PyQt6/PySide6 canlı operatör arayüzü
     utils/
   scripts/                # Kurulum, frame capture, sentetik veri, YOLO train
   systemd/                # Otomatik başlatma service örneği
@@ -56,6 +57,22 @@ YOLO inference:
 ```bash
 python3 src/main.py --config config/default.yaml --detector yolo --weights models/best.pt --source pi
 ```
+
+## GUI
+
+Qt tabanlı canlı arayüz:
+
+```bash
+python3 src/gui/app.py --config config/default.yaml
+```
+
+Arayüzde canlı kamera/video görüntüsü, bbox/label/confidence/merkez overlay, anlık tespit tablosu, JSON/UDP/MAVLink çalışma modları ve Pixhawk bağlantı paneli bulunur. PyQt6 veya PySide6 gerekir. Raspberry Pi OS için önerilen kurulum:
+
+```bash
+sudo apt install python3-pyqt6
+```
+
+USB-UART dönüştürücü yokken `Pixhawk / MAVLink` panelinde `simulation` seçilip `Connect` ile telemetry simülasyonu açılabilir. Gerçek dönüştürücü geldiğinde `serial`, `/dev/ttyUSB0`, `57600` veya `115200` seçilerek aynı panelden bağlanılır.
 
 ## Çıktı Formatı
 
@@ -122,7 +139,16 @@ Pixhawk telemetrisi yoksa sadece `relative_position_m` hesaplanır. MAVLink üze
 
 MAVLink bridge uçuş komutu göndermez.
 
+## Donanımsız GUI Testi
+
+Örnek video üret:
+
+```bash
+python3 scripts/generate_sample_video.py
+```
+
+GUI'yi aç, `Run settings` panelinde `Simulation/video test` seç, video yolu olarak `sample_data/test.mp4` kullan ve `Start` düğmesine bas.
+
 ## Mevcut PX4/QGroundControl Projesiyle İlişki
 
 Kök repodaki Node.js tabanlı PX4/QGC görselleştirme sistemi değiştirilmedi. Bu modül bağımsız çalışır. QGC/SITL tarafına bilgi vermek için UDP JSON veya MAVLink `STATUSTEXT` kullanılabilir. Simülasyon kamerası yoksa `--source video` ile kaydedilmiş veya sentetik video üzerinden test edilmelidir.
-

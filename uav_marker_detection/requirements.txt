@@ -4,6 +4,9 @@ PyYAML>=6.0
 pymavlink>=2.4
 pytest>=8.0
 
+# Optional GUI dependency. Install one of these on Raspberry Pi OS:
+# PyQt6>=6.4
+# PySide6>=6.4
+
 # Optional YOLO training/inference dependency:
 # ultralytics>=8.3
-
