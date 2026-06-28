@@ -28,3 +28,6 @@ npm-debug.log*
 # Runtime
 *.pid
 *.seed
+
+# Video / Large binaries
+*.mp4
