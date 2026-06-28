@@ -1,0 +1,77 @@
+camera:
+  width: 640
+  height: 480
+  fps: 20
+  format: RGB888
+  warmup_frames: 5
+
+processing:
+  resize_width: 640
+  max_fps: 20
+
+detection:
+  hsv:
+    min_area_px: 400
+    max_area_fraction: 0.65
+    aspect_ratio_min: 0.65
+    aspect_ratio_max: 1.35
+    approx_epsilon_factor: 0.04
+    require_quadrilateral: true
+    min_extent: 0.55
+    morph_kernel_size: 5
+    morph_iterations: 1
+    max_markers_per_color: 8
+    red_ranges:
+      - lower: [0, 90, 70]
+        upper: [10, 255, 255]
+      - lower: [170, 90, 70]
+        upper: [179, 255, 255]
+    blue_ranges:
+      - lower: [95, 80, 50]
+        upper: [135, 255, 255]
+  yolo:
+    confidence_threshold: 0.35
+    image_size: 320
+    class_names:
+      0: red_marker
+      1: blue_marker
+
+geometry:
+  # MVP assumption: nadir-looking camera, flat ground, known altitude.
+  # Replace these with calibrated intrinsics/extrinsics before real flight tests.
+  default_altitude_m: 20.0
+  marker_size_m: 2.0
+  camera:
+    hfov_deg: 66.0
+    vfov_deg: 41.0
+    mount_roll_deg: 0.0
+    mount_pitch_deg: 0.0
+    mount_yaw_deg: 0.0
+
+communication:
+  console:
+    enabled: true
+    print_empty_frames: false
+  json:
+    enabled: true
+    path: logs/marker_detections.jsonl
+  udp:
+    enabled: false
+    host: 127.0.0.1
+    port: 15000
+    broadcast: false
+  mavlink:
+    enabled: false
+    connection_string: udpout:127.0.0.1:14550
+    baud: 57600
+    heartbeat_timeout_s: 0
+    send_statustext: true
+    statustext_min_interval_s: 1.0
+
+debug:
+  draw: false
+  show_window: false
+  save_debug_frames: false
+  debug_frame_dir: logs/debug_frames
+  debug_frame_interval: 30
+

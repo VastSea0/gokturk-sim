@@ -1,0 +1,16 @@
+communication:
+  mavlink:
+    enabled: true
+    # Serial examples:
+    # connection_string: /dev/ttyAMA0
+    # baud: 57600
+    #
+    # UDP examples:
+    # connection_string: udpout:127.0.0.1:14550
+    # connection_string: udp:127.0.0.1:14550
+    connection_string: udpout:127.0.0.1:14550
+    baud: 57600
+    heartbeat_timeout_s: 0
+    send_statustext: true
+    statustext_min_interval_s: 1.0
+

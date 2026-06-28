@@ -1,0 +1,17 @@
+[Unit]
+Description=UAV Red/Blue Marker Detection
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/pi/gokturk-uav/uav_marker_detection
+ExecStart=/home/pi/gokturk-uav/uav_marker_detection/scripts/run_pi5.sh --config config/default.yaml --detector hsv --source pi
+Restart=on-failure
+RestartSec=3
+User=pi
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
+

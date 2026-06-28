@@ -1,0 +1,14 @@
+camera:
+  width: 640
+  height: 480
+  fps: 20
+  format: RGB888
+
+processing:
+  resize_width: 640
+  max_fps: 20
+
+debug:
+  draw: false
+  show_window: false
+
