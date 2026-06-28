@@ -15,11 +15,16 @@ class HSVMarkerDetector:
         self.config = config or {}
         self.min_area_px = float(self.config.get("min_area_px", 400))
         self.max_area_fraction = float(self.config.get("max_area_fraction", 0.65))
-        self.aspect_ratio_min = float(self.config.get("aspect_ratio_min", 0.65))
-        self.aspect_ratio_max = float(self.config.get("aspect_ratio_max", 1.35))
-        self.approx_epsilon_factor = float(self.config.get("approx_epsilon_factor", 0.04))
-        self.require_quadrilateral = bool(self.config.get("require_quadrilateral", True))
-        self.min_extent = float(self.config.get("min_extent", 0.55))
+        self.aspect_ratio_min = float(self.config.get("aspect_ratio_min", 0.60))
+        self.aspect_ratio_max = float(self.config.get("aspect_ratio_max", 1.50))
+        self.approx_epsilon_factor = float(self.config.get("approx_epsilon_factor", 0.06))
+        # Allow 3-6 vertices to handle perspective distortion (fisheye lens)
+        self.require_quadrilateral = bool(self.config.get("require_quadrilateral", False))
+        self.min_vertices = int(self.config.get("min_vertices", 3))
+        self.max_vertices = int(self.config.get("max_vertices", 8))
+        # Lowered from 0.55 — blue cards partially occluded or with printed pattern
+        # have lower fill ratios; 0.25 still filters out thin lines/noise
+        self.min_extent = float(self.config.get("min_extent", 0.25))
         self.max_markers_per_color = int(self.config.get("max_markers_per_color", 8))
 
         kernel_size = int(self.config.get("morph_kernel_size", 5))
@@ -36,7 +41,10 @@ class HSVMarkerDetector:
         )
         self.blue_ranges = self.config.get(
             "blue_ranges",
-            [{"lower": [95, 80, 50], "upper": [135, 255, 255]}],
+            # Widened range: catches real blue cards under indoor lighting.
+            # H: 90-140 covers blue to blue-purple; S: 50+ excludes pale grey walls;
+            # V: 30+ ensures dark-blue cards in shadow are still detected.
+            [{"lower": [90, 50, 30], "upper": [140, 255, 255]}],
         )
 
     def detect(self, frame_bgr: np.ndarray) -> List[MarkerDetection]:
@@ -89,6 +97,9 @@ class HSVMarkerDetector:
             approx = cv2.approxPolyDP(contour, self.approx_epsilon_factor * perimeter, True)
             vertex_count = len(approx)
             if self.require_quadrilateral and vertex_count != 4:
+                continue
+            # Vertex count range filter (relaxed — fisheye distorts shapes)
+            if not (self.min_vertices <= vertex_count <= self.max_vertices):
                 continue
 
             x, y, w, h = cv2.boundingRect(contour)
