@@ -41,6 +41,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--loop-video", action="store_true", help="Loop video input")
     parser.add_argument("--weights", help="YOLO weights path when --detector yolo is used")
     parser.add_argument("--mavlink", help="Override MAVLink connection string and enable bridge")
+    parser.add_argument("--mavlink-baud", type=int, help="Override MAVLink serial baudrate")
     parser.add_argument("--json-log", help="Override JSONL log path")
     parser.add_argument("--no-json-log", action="store_true", help="Disable JSONL logging")
     parser.add_argument("--udp-host", help="Enable UDP JSON output and set host")
@@ -145,6 +146,8 @@ def apply_cli_overrides(args: argparse.Namespace, config: Dict[str, Any]) -> Dic
     if args.mavlink:
         mav_cfg["enabled"] = True
         mav_cfg["connection_string"] = args.mavlink
+    if args.mavlink_baud:
+        mav_cfg["baud"] = args.mavlink_baud
     if args.show:
         debug_cfg["show_window"] = True
         debug_cfg["draw"] = True
