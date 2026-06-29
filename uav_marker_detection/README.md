@@ -42,17 +42,30 @@ python3 scripts/generate_sample_video.py
 python3 src/main.py --config config/default.yaml --source video --video sample_data/test.mp4
 ```
 
+MacBook kamerası veya video ile YOLO test:
+
+```bash
+./scripts/run_macbook_yolo.sh
+SOURCE=video ./scripts/run_macbook_yolo.sh
+```
+
+Bu script varsayılan olarak `hybrid` detector kullanır: YOLO kutularını kırmızı/mavi renk doğrulamasından geçirir ve YOLO'nun kaçırdığı yüksek güvenli renk bölgelerini ekler. Ham sentetik YOLO modeli gerçek kamera görüntüsünde yanlış pozitif üretebildiği için canlı testte önerilen mod budur.
+
+Detaylar için [RUN_MACBOOK.md](RUN_MACBOOK.md) ve sentetik eğitim için [TRAIN_SYNTHETIC.md](TRAIN_SYNTHETIC.md).
+
 Raspberry Pi Camera ile:
 
 ```bash
 python3 src/main.py --config config/default.yaml --detector color --source pi
 ```
 
-MAVLink UDP raporlama etkin:
+Pixhawk/PX4 MAVLink UDP telemetri dinleme:
 
 ```bash
-python3 src/main.py --config config/default.yaml --detector color --source pi --mavlink udpout:127.0.0.1:14550
+python3 src/main.py --config config/default.yaml --detector color --source pi --mavlink udpin:0.0.0.0:14550
 ```
+
+`udpout:127.0.0.1:14550` yalnızca QGroundControl gibi bir endpoint'e mesaj göndermek için kullanılabilir; Pixhawk'tan gelen telemetriyi dinlemek için genelde `udpin:0.0.0.0:14550` gerekir.
 
 YOLO inference:
 
@@ -93,13 +106,13 @@ Qt tabanlı canlı arayüz:
 python3 src/gui/app.py --config config/default.yaml
 ```
 
-Arayüzde canlı kamera/video görüntüsü, bbox/label/confidence/merkez overlay, anlık tespit tablosu, FPS/model/kamera/telemetry durumu, debug mask görünümü, JSON/UDP/MAVLink çalışma modları ve Pixhawk bağlantı paneli bulunur. PyQt6 veya PySide6 gerekir. Raspberry Pi OS için önerilen kurulum:
+Arayüzde canlı kamera/video görüntüsü, bbox/label/confidence/merkez overlay, anlık tespit tablosu, FPS/model/kamera/telemetry durumu, canlı MAVLink telemetri tablosu, debug mask görünümü, JSON/UDP/MAVLink çalışma modları ve Pixhawk bağlantı paneli bulunur. PyQt6 veya PySide6 gerekir. Raspberry Pi OS için önerilen kurulum:
 
 ```bash
 sudo apt install python3-pyqt6
 ```
 
-USB-UART dönüştürücü yokken `Pixhawk / MAVLink` panelinde `simulation` seçilip `Connect` ile telemetry simülasyonu açılabilir. Gerçek dönüştürücü geldiğinde `serial`, `/dev/ttyUSB0`, `57600` veya `115200` seçilerek aynı panelden bağlanılır.
+`Pixhawk / MAVLink` panelinde UDP için varsayılan dinleme adresi `udpin:0.0.0.0:14550` değeridir. Heartbeat gelince GUI mode/armed, attitude, local/global position, altitude, airspeed, groundspeed, battery, GPS, pressure, RC RSSI ve son görülen raw MAVLink mesaj alanlarını canlı listeler. USB-UART dönüştürücü yokken `simulation` seçilip `Connect` ile telemetry simülasyonu açılabilir. Gerçek dönüştürücü geldiğinde `serial`, `/dev/ttyUSB0`, `57600` veya `115200` seçilerek aynı panelden bağlanılır.
 
 ## Çıktı Formatı
 

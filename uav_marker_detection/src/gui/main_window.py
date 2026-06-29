@@ -9,10 +9,12 @@ import cv2
 
 from camera.pi_camera import PiCameraSource
 from camera.video_file_camera import VideoFileCamera
+from camera.webcam_camera import WebcamCamera
 from communication.mavlink_bridge import MavlinkBridge
 from communication.target_reporter import TargetReporter
 from communication.telemetry_state import TelemetryState
 from detection.adaptive_color_detector import AdaptiveColorMarkerDetector
+from detection.hybrid_marker_detector import HybridMarkerDetector
 from detection.hsv_marker_detector import HSVMarkerDetector
 from detection.yolo_marker_detector import YOLOMarkerDetector
 from main import frame_result, maybe_resize
@@ -69,6 +71,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.timer = QtCore.QTimer(self)
         self.timer.timeout.connect(self.process_frame)
         self.timer.setInterval(int(get_nested(self.config, "gui.update_interval_ms", 33)))
+        self.telemetry_timer = QtCore.QTimer(self)
+        self.telemetry_timer.timeout.connect(self.refresh_telemetry_panel)
+        self.telemetry_timer.setInterval(200)
 
         self.source: Optional[Any] = None
         self.detector: Optional[Any] = None
@@ -78,6 +83,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.simulated_telemetry = False
         self.frame_id = 0
         self.fps_counter = FPSCounter()
+        self.last_fps = 0.0
+        self.last_telemetry_state = TelemetryState()
         self.last_runtime_settings: Dict[str, Any] = {}
 
         self.settings_panel.start_requested.connect(self.start_processing)
@@ -87,6 +94,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.statusBar().showMessage("Ready")
         self.connection_panel.update_telemetry(TelemetryState())
+        self.telemetry_timer.start()
 
     def start_processing(self, settings: Dict[str, Any]) -> None:
         self.stop_processing()
@@ -166,12 +174,14 @@ class MainWindow(QtWidgets.QMainWindow):
             telemetry_state.as_telemetry_dict(),
         )
         self.detection_panel.update_result(result)
+        self.last_telemetry_state = telemetry_state
         self.connection_panel.update_telemetry(telemetry_state)
 
         if self.reporter is not None:
             self.reporter.report(result)
 
         fps = self.fps_counter.update()
+        self.last_fps = fps
         display_frame = frame
         debug_view = self.last_runtime_settings.get("debug_view", "overlay")
         if debug_view != "overlay" and hasattr(self.detector, "debug_view"):
@@ -186,6 +196,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.mavlink_bridge.disconnect()
             self.simulated_telemetry = True
             self.connection_panel.update_telemetry(TelemetryState.simulated_state(self.frame_id))
+            self.last_telemetry_state = TelemetryState.simulated_state(self.frame_id)
             self.statusBar().showMessage("Simulated telemetry enabled")
             return
 
@@ -197,13 +208,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self.mavlink_bridge.connect()
         telemetry = self.mavlink_bridge.poll_telemetry()
         state = TelemetryState.from_bridge(telemetry, self.mavlink_bridge.status())
+        self.last_telemetry_state = state
         self.connection_panel.update_telemetry(state)
         self.statusBar().showMessage(state.status_line())
 
     def disconnect_mavlink(self) -> None:
         self.simulated_telemetry = False
         self.mavlink_bridge.disconnect()
-        self.connection_panel.update_telemetry(TelemetryState())
+        self.last_telemetry_state = TelemetryState()
+        self.connection_panel.update_telemetry(self.last_telemetry_state)
         self.statusBar().showMessage("MAVLink disconnected")
 
     def closeEvent(self, event) -> None:
@@ -218,6 +231,13 @@ class MainWindow(QtWidgets.QMainWindow):
         if detector_name == "hsv":
             return HSVMarkerDetector(get_nested(self.config, "detection.hsv", {}))
         weights = settings.get("weights")
+        if detector_name == "hybrid":
+            hybrid_config = get_nested(self.config, "detection.hybrid", {})
+            if not weights:
+                weights = hybrid_config.get("weights_path") or get_nested(self.config, "detection.yolo.weights_path", None)
+            if not weights:
+                raise ValueError("YOLO weights path is required for hybrid detector")
+            return HybridMarkerDetector(weights, hybrid_config)
         yolo_config = get_nested(self.config, "detection.yolo_seg" if detector_name == "yolo_seg" else "detection.yolo", {})
         if not weights:
             weights = yolo_config.get("weights_path")
@@ -232,6 +252,14 @@ class MainWindow(QtWidgets.QMainWindow):
             if not video_path:
                 raise ValueError("Video path is required for video mode")
             return VideoFileCamera(video_path, loop=True)
+        if source_name == "webcam":
+            camera_cfg = get_nested(self.config, "camera", {})
+            return WebcamCamera(
+                camera_index=0,
+                width=int(camera_cfg.get("width", 640)),
+                height=int(camera_cfg.get("height", 480)),
+                fps=int(camera_cfg.get("fps", 20)),
+            )
         return PiCameraSource(get_nested(self.config, "camera", {}))
 
     def _build_tracker(self) -> CentroidTracker:
@@ -257,6 +285,15 @@ class MainWindow(QtWidgets.QMainWindow):
         telemetry = self.mavlink_bridge.poll_telemetry()
         return TelemetryState.from_bridge(telemetry, self.mavlink_bridge.status())
 
+    def refresh_telemetry_panel(self) -> None:
+        if not self.simulated_telemetry and not self.mavlink_bridge.is_link_open():
+            return
+        telemetry_state = self._current_telemetry_state()
+        self.last_telemetry_state = telemetry_state
+        self.connection_panel.update_telemetry(telemetry_state)
+        camera_state = "running" if self.timer.isActive() else "stopped"
+        self._update_runtime_label(self.last_fps, camera_state, telemetry_state)
+
     def _show_error(self, title: str, exc: Exception) -> None:
         details = str(exc)
         QtWidgets.QMessageBox.critical(self, title, details)
@@ -264,7 +301,14 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _update_runtime_label(self, fps: float, camera_state: str, telemetry_state: TelemetryState) -> None:
         detector_name = self.last_runtime_settings.get("detector", "-")
-        telemetry_text = "sim" if telemetry_state.simulated else ("connected" if telemetry_state.connected else "disconnected")
+        if telemetry_state.simulated:
+            telemetry_text = "sim"
+        elif telemetry_state.connected:
+            telemetry_text = "heartbeat"
+        elif telemetry_state.link_open:
+            telemetry_text = "link open"
+        else:
+            telemetry_text = "disconnected"
         self.runtime_label.setText(
             f"FPS: {fps:.1f} | Model: {detector_name} | Camera: {camera_state} | Telemetry: {telemetry_text}"
         )

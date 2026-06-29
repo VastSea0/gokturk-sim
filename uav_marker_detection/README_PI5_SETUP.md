@@ -142,8 +142,10 @@ communication:
 UDP örnek:
 
 ```bash
-python3 src/main.py --config config/default.yaml --detector color --source pi --mavlink udpout:127.0.0.1:14550
+python3 src/main.py --config config/default.yaml --detector color --source pi --mavlink udpin:0.0.0.0:14550
 ```
+
+Pixhawk/PX4 telemetrisini UDP üzerinden Raspberry Pi'da dinlemek için genelde `udpin:0.0.0.0:14550` kullanılır. `udpout:127.0.0.1:14550` ise QGroundControl gibi bir endpoint'e sadece mesaj göndermek için kullanılabilir.
 
 QGroundControl tarafında marker özetleri `STATUSTEXT` olarak görülebilir. Daha zengin entegrasyon için UDP JSON çıkışını bir ground-station uygulaması okuyabilir:
 
@@ -174,7 +176,7 @@ Arayüz modları:
 - `Camera + processing`: canlı görüntü ve color/HSV/YOLO/YOLO-seg tespit.
 - `Camera + JSON log`: tespitleri JSONL dosyasına yazar.
 - `Camera + UDP output`: tespitleri UDP JSON olarak yollar.
-- `Camera + Pixhawk/MAVLink`: Pixhawk telemetry okur ve marker özetini güvenli `STATUSTEXT` ile gönderebilir.
+- `Camera + Pixhawk/MAVLink`: Pixhawk telemetry okur, canlı telemetri tablosunu günceller ve marker özetini güvenli `STATUSTEXT` ile gönderebilir.
 - `Simulation/video test`: USB-UART veya kamera olmadan video dosyasıyla test.
 
 ## 7. Pixhawk Telemetry Port -> USB-UART-TTL -> Raspberry Pi USB
@@ -216,7 +218,7 @@ GUI bağlantısı:
 2. Port olarak `/dev/ttyUSB0` veya görünen portu seçin.
 3. Baudrate olarak önce `57600`, sonra gerekirse `115200` deneyin.
 4. `Connect` düğmesine basın.
-5. Heartbeat/telemetry gelince durum ve altitude/yaw/position alanları güncellenir.
+5. Heartbeat/telemetry gelince mode/armed, attitude, altitude, airspeed, groundspeed, battery, GPS, local/global position ve raw MAVLink mesaj alanları güncellenir.
 
 ## 8. Baudrate Seçimi
 
@@ -238,9 +240,10 @@ python3 src/main.py --config config/default.yaml --detector color --source video
 GUI'de UDP testi:
 
 1. `Pixhawk / MAVLink` panelinde `udp` seçin.
-2. `udp:127.0.0.1:14550` yazın.
+2. Pixhawk/PX4 telemetrisini dinlemek için `udpin:0.0.0.0:14550` yazın.
 3. `Connect` düğmesine basın.
-4. QGroundControl açıkken `STATUSTEXT` mesajlarını kontrol edin.
+4. Durum `Heartbeat OK` olmalı; yalnızca `Link open, waiting heartbeat` görünüyorsa UDP port açık ama Pixhawk heartbeat paketi gelmiyor demektir.
+5. QGroundControl açıkken `STATUSTEXT` mesajlarını kontrol edin.
 
 Serial test için QGroundControl aynı anda aynı serial portu açmamalıdır; portu tek süreç kullanabilir.
 
@@ -263,7 +266,7 @@ Bu mod gerçek Pixhawk bağlantısı yerine yalnızca koordinat dönüşümü ve
 - Kullanıcı `dialout` grubunda.
 - PX4 telem port baudrate değeri GUI seçimiyle aynı.
 - QGroundControl aynı serial portu kilitlemiyor.
-- GUI'de heartbeat/attitude/altitude güncelleniyor.
+- GUI'de heartbeat, airspeed, attitude, altitude, battery, GPS ve raw MAVLink mesajları güncelleniyor.
 - Marker bulununca JSON/UDP/MAVLink logları yerde doğrulanıyor.
 - Kodun uçuş kontrol komutu göndermediği teyit ediliyor.
 

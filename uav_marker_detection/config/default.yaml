@@ -79,6 +79,42 @@ detection:
     class_names:
       0: red_marker
       1: blue_marker
+  hybrid:
+    weights_path: models/best.pt
+    confidence_threshold: 0.55
+    iou_threshold: 0.45
+    image_size: 320
+    require_yolo_color_match: true
+    yolo_min_color_fill: 0.16
+    color_min_confidence: 0.72
+    color_min_area_fraction: 0.002
+    merge_iou_threshold: 0.25
+    class_names:
+      0: red_marker
+      1: blue_marker
+    color:
+      min_area_px: 500
+      max_area_fraction: 0.85
+      min_color_fill: 0.18
+      max_aspect_ratio: 8.0
+      blur_kernel_size: 3
+      morph_kernel_size: 7
+      morph_iterations: 2
+      max_markers_per_color: 4
+      use_clahe: true
+      red_hsv_ranges:
+        - lower: [0, 95, 70]
+          upper: [10, 255, 255]
+        - lower: [170, 95, 70]
+          upper: [179, 255, 255]
+      blue_hsv_ranges:
+        - lower: [88, 45, 30]
+          upper: [148, 255, 255]
+      red_dominance_min: 0.12
+      blue_dominance_min: 0.08
+      min_channel_value: 40
+      red_lab_a_min: 150
+      blue_lab_b_max: 122
 
 tracking:
   enabled: true
@@ -113,9 +149,13 @@ communication:
     broadcast: false
   mavlink:
     enabled: false
-    connection_string: udpout:127.0.0.1:14550
+    # For listening to Pixhawk/PX4 telemetry over UDP, use udpin.
+    # For sending only to QGroundControl, udpout:127.0.0.1:14550 is also supported.
+    connection_string: udpin:0.0.0.0:14550
     baud: 57600
     heartbeat_timeout_s: 0
+    auto_request_streams: true
+    request_stream_rate_hz: 5
     send_statustext: true
     statustext_min_interval_s: 1.0
 

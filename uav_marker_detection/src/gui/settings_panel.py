@@ -29,13 +29,13 @@ class SettingsPanel(QtWidgets.QGroupBox):
         self.mode_combo.addItems(list(self.MODES.keys()))
 
         self.source_combo = QtWidgets.QComboBox()
-        self.source_combo.addItems(["pi", "video"])
+        self.source_combo.addItems(["pi", "webcam", "video"])
 
         self.video_edit = QtWidgets.QLineEdit(str(project_dir / "sample_data" / "test.mp4"))
         self.video_browse_button = QtWidgets.QPushButton("Browse")
 
         self.detector_combo = QtWidgets.QComboBox()
-        self.detector_combo.addItems(["hsv", "color", "yolo", "yolo_seg"])
+        self.detector_combo.addItems(["hybrid", "color", "hsv", "yolo", "yolo_seg"])
         yolo_cfg = config.get("detection", {}).get("yolo", {})
         self.weights_edit = QtWidgets.QLineEdit(str(project_dir / yolo_cfg.get("weights_path", "models/best.pt")))
         self.weights_browse_button = QtWidgets.QPushButton("Browse")
@@ -157,7 +157,7 @@ class SettingsPanel(QtWidgets.QGroupBox):
             self.udp_check.setChecked(False)
 
     def _detector_changed(self, text: str) -> None:
-        yolo_enabled = text in {"yolo", "yolo_seg"}
+        yolo_enabled = text in {"hybrid", "yolo", "yolo_seg"}
         self.weights_edit.setEnabled(yolo_enabled)
         self.weights_browse_button.setEnabled(yolo_enabled)
 

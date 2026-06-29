@@ -31,6 +31,17 @@ npm-debug.log*
 
 # Video / Large binaries
 *.mp4
+*.pt
+*.onnx
+*.engine
+*.tflite
+*.torchscript
+*.mlpackage
+*.ncnn
+uav_marker_detection/datasets/
+uav_marker_detection/runs/
+uav_marker_detection/models/
+uav_marker_detection/logs/
 
 # Temporary scratch scripts
 uav_marker_detection/scratch/

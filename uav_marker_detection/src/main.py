@@ -16,10 +16,12 @@ if str(CURRENT_DIR) not in sys.path:
 
 from camera.pi_camera import PiCameraSource
 from camera.video_file_camera import VideoFileCamera
+from camera.webcam_camera import WebcamCamera
 from communication.json_logger import JSONLogger
 from communication.mavlink_bridge import MavlinkBridge
 from communication.udp_bridge import UDPJsonBridge
 from detection.adaptive_color_detector import AdaptiveColorMarkerDetector
+from detection.hybrid_marker_detector import HybridMarkerDetector
 from detection.hsv_marker_detector import HSVMarkerDetector
 from detection.yolo_marker_detector import YOLOMarkerDetector
 from geometry.coordinate_transform import CameraGeometry, estimate_positions
@@ -35,9 +37,10 @@ LOGGER = logging.getLogger("uav_marker_detection")
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="UAV red/blue ground marker detection for Raspberry Pi 5")
     parser.add_argument("--config", default="config/default.yaml", help="YAML config path")
-    parser.add_argument("--detector", choices=["color", "hsv", "yolo", "yolo_seg"], default="color", help="Detector backend")
-    parser.add_argument("--source", choices=["pi", "video"], default="pi", help="Input source")
+    parser.add_argument("--detector", choices=["color", "hsv", "yolo", "yolo_seg", "hybrid"], default="color", help="Detector backend")
+    parser.add_argument("--source", choices=["pi", "video", "webcam"], default="pi", help="Input source")
     parser.add_argument("--video", help="Video path when --source video is used")
+    parser.add_argument("--camera-index", type=int, default=0, help="OpenCV webcam index when --source webcam is used")
     parser.add_argument("--loop-video", action="store_true", help="Loop video input")
     parser.add_argument("--weights", help="YOLO weights path when --detector yolo is used")
     parser.add_argument("--mavlink", help="Override MAVLink connection string and enable bridge")
@@ -62,6 +65,13 @@ def build_detector(args: argparse.Namespace, config: Dict[str, Any]):
     if args.detector == "hsv":
         return HSVMarkerDetector(get_nested(config, "detection.hsv", {}))
     weights = args.weights
+    if args.detector == "hybrid":
+        yolo_config = get_nested(config, "detection.hybrid", {})
+        if not weights:
+            weights = yolo_config.get("weights_path") or get_nested(config, "detection.yolo.weights_path", None)
+        if not weights:
+            raise ValueError("--weights or detection.hybrid.weights_path is required when --detector hybrid is selected")
+        return HybridMarkerDetector(weights, yolo_config)
     yolo_config = get_nested(config, "detection.yolo_seg" if args.detector == "yolo_seg" else "detection.yolo", {})
     if not weights:
         weights = yolo_config.get("weights_path")
@@ -75,6 +85,14 @@ def build_source(args: argparse.Namespace, config: Dict[str, Any]):
         if not args.video:
             raise ValueError("--video is required when --source video is selected")
         return VideoFileCamera(args.video, loop=args.loop_video)
+    if args.source == "webcam":
+        camera_cfg = get_nested(config, "camera", {})
+        return WebcamCamera(
+            camera_index=args.camera_index,
+            width=int(camera_cfg.get("width", 640)),
+            height=int(camera_cfg.get("height", 480)),
+            fps=int(camera_cfg.get("fps", 20)),
+        )
     return PiCameraSource(get_nested(config, "camera", {}))
 
 

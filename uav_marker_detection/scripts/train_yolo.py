@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 
 
 def parse_args() -> argparse.Namespace:
@@ -25,6 +26,7 @@ def main() -> int:
     except ImportError as exc:
         raise SystemExit("ultralytics is not installed. Run: pip install ultralytics") from exc
 
+    project_dir = Path(args.project).expanduser().resolve()
     model = YOLO(args.model)
     model.train(
         data=args.data,
@@ -32,7 +34,7 @@ def main() -> int:
         imgsz=args.imgsz,
         batch=args.batch,
         device=args.device,
-        project=args.project,
+        project=str(project_dir),
         name=args.name,
         task=args.task,
     )

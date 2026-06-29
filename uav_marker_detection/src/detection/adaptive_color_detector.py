@@ -75,7 +75,10 @@ class AdaptiveColorMarkerDetector:
         red_lab = lab[:, :, 1] > self.red_lab_a_min
         blue_lab = lab[:, :, 2] < self.blue_lab_b_max
 
-        red_mask = cv2.bitwise_and(red_hsv, ((red_dominance | red_lab).astype(np.uint8) * 255))
+        # Red is intentionally stricter than blue: skin, wood, and warm indoor
+        # surfaces can satisfy one cue, but real red tape/marker material should
+        # satisfy hue, channel dominance, and Lab redness together.
+        red_mask = cv2.bitwise_and(red_hsv, ((red_dominance & red_lab).astype(np.uint8) * 255))
         blue_mask = cv2.bitwise_and(blue_hsv, ((blue_dominance | blue_lab).astype(np.uint8) * 255))
 
         red_mask = self._clean_mask(red_mask)
@@ -212,4 +215,3 @@ class AdaptiveColorMarkerDetector:
         output = np.zeros_like(frame_bgr)
         output[mask > 0] = color
         return output
-

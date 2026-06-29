@@ -46,3 +46,23 @@ def test_adaptive_color_detector_finds_red_and_blue_without_square_requirement()
     assert "red_marker" in classes
     assert "blue_marker" in classes
 
+
+def test_adaptive_color_detector_ignores_skin_like_red_but_finds_large_blue() -> None:
+    frame = np.zeros((480, 640, 3), dtype=np.uint8)
+    frame[:] = (220, 218, 208)
+    cv2.rectangle(frame, (330, 80), (560, 440), (235, 70, 10), -1)
+    cv2.rectangle(frame, (40, 160), (260, 390), (80, 135, 195), -1)
+
+    detections = AdaptiveColorMarkerDetector(
+        {
+            "min_area_px": 500,
+            "max_area_fraction": 0.85,
+            "min_color_fill": 0.18,
+            "red_dominance_min": 0.12,
+            "red_lab_a_min": 150,
+            "blue_dominance_min": 0.08,
+        }
+    ).detect(frame)
+
+    assert any(d.class_name == "blue_marker" for d in detections)
+    assert not any(d.class_name == "red_marker" for d in detections)
