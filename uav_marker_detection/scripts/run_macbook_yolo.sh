@@ -15,6 +15,9 @@ MAX_FRAMES="${MAX_FRAMES:-}"
 DRAW_DEBUG="${DRAW_DEBUG:-1}"
 SHOW_WINDOW="${SHOW_WINDOW:-1}"
 JSON_LOG="${JSON_LOG:-logs/macbook_yolo_detections.jsonl}"
+SHAPE_FILTER="${SHAPE_FILTER:-0}"
+NMS="${NMS:-0}"
+NMS_IOU="${NMS_IOU:-}"
 
 if [[ -z "${WEIGHTS}" ]]; then
   WEIGHTS="$(find runs -path '*/weights/best.pt' -type f 2>/dev/null | sort | tail -n 1 || true)"
@@ -56,6 +59,18 @@ if [[ "${DRAW_DEBUG}" == "1" ]]; then
   cmd+=(--draw-debug)
 fi
 
+if [[ "${SHAPE_FILTER}" == "1" ]]; then
+  cmd+=(--shape-filter)
+fi
+
+if [[ "${NMS}" == "1" ]]; then
+  cmd+=(--nms)
+fi
+
+if [[ -n "${NMS_IOU}" ]]; then
+  cmd+=(--nms-iou "${NMS_IOU}")
+fi
+
 if [[ -n "${MAX_FRAMES}" ]]; then
   cmd+=(--max-frames "${MAX_FRAMES}")
 fi
@@ -64,6 +79,8 @@ echo "[INFO] Running MacBook YOLO marker detector"
 echo "[INFO] Detector: ${DETECTOR}"
 echo "[INFO] Source: ${SOURCE}"
 echo "[INFO] Weights: ${WEIGHTS}"
+echo "[INFO] Shape filter: ${SHAPE_FILTER}"
+echo "[INFO] NMS: ${NMS}"
 echo "[INFO] JSON log: ${JSON_LOG}"
 echo "[INFO] Press q in the OpenCV window to quit."
 echo

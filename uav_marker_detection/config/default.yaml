@@ -123,6 +123,20 @@ tracking:
   smoothing_alpha: 0.45
   stale_confidence_decay: 0.65
 
+postprocess:
+  square_filter:
+    enabled: false
+    target_shape_name: square_2m_marker
+    # 2x2 m marker is a square; allow some camera perspective and imperfect tape edges.
+    max_aspect_ratio: 1.45
+    min_rectangularity: 0.50
+    min_extent: 0.35
+    min_shape_score: 0.55
+  nms:
+    enabled: false
+    iou_threshold: 0.45
+    class_aware: true
+
 geometry:
   # MVP assumption: nadir-looking camera, flat ground, known altitude.
   # Replace these with calibrated intrinsics/extrinsics before real flight tests.

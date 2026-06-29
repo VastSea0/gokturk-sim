@@ -114,6 +114,15 @@ sudo apt install python3-pyqt6
 
 `Pixhawk / MAVLink` panelinde UDP için varsayılan dinleme adresi `udpin:0.0.0.0:14550` değeridir. Heartbeat gelince GUI mode/armed, attitude, local/global position, altitude, airspeed, groundspeed, battery, GPS, pressure, RC RSSI ve son görülen raw MAVLink mesaj alanlarını canlı listeler. USB-UART dönüştürücü yokken `simulation` seçilip `Connect` ile telemetry simülasyonu açılabilir. Gerçek dönüştürücü geldiğinde `serial`, `/dev/ttyUSB0`, `57600` veya `115200` seçilerek aynı panelden bağlanılır.
 
+GUI'deki `2x2 square shape filter` checkbox'ı açıkken algılama sonuçları kareye benzeme skorundan geçirilir. Bu mod özellikle gerçek hedef 2x2 m kare işaretçi olduğunda yanlış renk lekelerini azaltmak için kullanılır; uzun dikdörtgen veya kareye benzemeyen renk alanları elenir. `NMS` checkbox'ı üst üste binen aynı sınıf bbox'ları temizler ve yüksek confidence olan kutuyu bırakır.
+
+CLI karşılıkları:
+
+```bash
+python3 src/main.py --config config/default.yaml --detector hybrid --source pi --shape-filter --nms
+python3 src/main.py --config config/default.yaml --detector hybrid --source video --video sample_data/test.mp4 --shape-filter --nms --nms-iou 0.45
+```
+
 ## Çıktı Formatı
 
 Her frame için JSON nesnesi üretilir. Terminale sadece marker bulunan frameler yazılır; JSONL logger varsayılan olarak tüm frameleri `logs/marker_detections.jsonl` içine ekler.
@@ -161,6 +170,17 @@ HSV detector yalnızca hızlı debug/fallback için korunur. Eşikler `config/de
 ## Tracking
 
 `src/tracking/centroid_tracker.py` sınıf bazlı nearest-centroid tracking yapar. Track ID üretir, bbox/merkez smoothing uygular ve `tracking.max_missed` kadar frame boyunca kısa kayıpları tutar. JSON çıktısında `track_id` ve `stale_frames` alanları bulunur.
+
+## Shape Filter ve NMS
+
+`postprocess.square_filter` 2x2 m kare marker varsayımıyla bbox/polygon şekil metrikleri hesaplar:
+
+- aspect ratio yaklaşık 1.0 olmalı
+- contour/min-area-rectangle doluluğu yeterli olmalı
+- bbox extent çok düşük olmamalı
+- varsa polygon yaklaşık dörtgen/kare karakteri taşımalı
+
+Filtre açıkken JSON çıktısına `shape.name`, `shape.score` ve shape metrikleri eklenir. `postprocess.nms` ise class-aware Non-Maximum Suppression uygular.
 
 ## Raspberry Pi 5 Performans Beklentisi
 

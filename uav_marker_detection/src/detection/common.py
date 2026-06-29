@@ -22,6 +22,9 @@ class MarkerDetection:
     stale_frames: int = 0
     mask_polygon: Optional[List[Point]] = None
     detector_name: Optional[str] = None
+    shape_name: Optional[str] = None
+    shape_score: Optional[float] = None
+    shape_metrics: Optional[Dict[str, float]] = None
 
     def as_dict(
         self,
@@ -45,6 +48,14 @@ class MarkerDetection:
             result["track_id"] = int(self.track_id)
         if self.detector_name:
             result["detector"] = self.detector_name
+        if self.shape_name:
+            result["shape"] = {
+                "name": self.shape_name,
+                "score": round(float(self.shape_score or 0.0), 4),
+                "metrics": {
+                    key: round(float(value), 4) for key, value in (self.shape_metrics or {}).items()
+                },
+            }
         if self.mask_polygon:
             result["mask_polygon"] = [
                 [round(float(point[0]), 2), round(float(point[1]), 2)] for point in self.mask_polygon

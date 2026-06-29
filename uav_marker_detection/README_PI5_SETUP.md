@@ -179,6 +179,8 @@ Arayüz modları:
 - `Camera + Pixhawk/MAVLink`: Pixhawk telemetry okur, canlı telemetri tablosunu günceller ve marker özetini güvenli `STATUSTEXT` ile gönderebilir.
 - `Simulation/video test`: USB-UART veya kamera olmadan video dosyasıyla test.
 
+`Run settings` panelindeki `2x2 square shape filter` checkbox'ı açıkken yalnızca kareye benzeyen kırmızı/mavi 2x2 m marker adayları tutulur. `NMS` checkbox'ı aynı sınıfta üst üste binen bbox'ları temizler. Bu iki seçenek özellikle Pi Camera canlı testinde renk lekelerini ve duplicate bbox'ları azaltmak için kullanılır.
+
 ## 7. Pixhawk Telemetry Port -> USB-UART-TTL -> Raspberry Pi USB
 
 Bağlantı şeması:

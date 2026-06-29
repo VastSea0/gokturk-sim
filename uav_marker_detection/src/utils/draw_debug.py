@@ -24,6 +24,8 @@ def draw_detections(
         x1, y1, x2, y2 = detection.bbox_xyxy
         color = COLORS.get(detection.class_name, (0, 255, 255))
         label_parts = [detection.class_name, f"{detection.confidence:.2f}"]
+        if detection.shape_score is not None:
+            label_parts.append(f"sq={detection.shape_score:.2f}")
         if detection.track_id is not None:
             label_parts.append(f"id={detection.track_id}")
         if detection.stale_frames:

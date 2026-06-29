@@ -9,7 +9,7 @@ from .qt_compat import QtWidgets
 class DetectionPanel(QtWidgets.QWidget):
     """Live table of current frame marker detections."""
 
-    HEADERS = ["Class", "Conf", "BBox", "Center", "Relative m", "Local NED", "Global", "Time"]
+    HEADERS = ["Class", "Conf", "Shape", "BBox", "Center", "Relative m", "Local NED", "Global", "Time"]
 
     def __init__(self, parent: Optional[QtWidgets.QWidget] = None) -> None:
         super().__init__(parent)
@@ -46,6 +46,7 @@ class DetectionPanel(QtWidgets.QWidget):
             values = [
                 detection.get("class", "-"),
                 f"{float(detection.get('confidence', 0.0)):.2f}",
+                self._shape_text(detection.get("shape")),
                 self._list_text(detection.get("bbox_xyxy")),
                 self._list_text(detection.get("center_px")),
                 self._relative_text(relative),
@@ -64,6 +65,15 @@ class DetectionPanel(QtWidgets.QWidget):
         if not isinstance(value, list):
             return "-"
         return ", ".join(str(v) for v in value)
+
+    def _shape_text(self, value: Any) -> str:
+        if not isinstance(value, dict):
+            return "-"
+        name = value.get("name", "shape")
+        score = value.get("score")
+        if score is None:
+            return str(name)
+        return f"{name} {float(score):.2f}"
 
     def _relative_text(self, value: Dict[str, Any]) -> str:
         if not value:
@@ -91,4 +101,3 @@ class DetectionPanel(QtWidgets.QWidget):
             lon=value.get("lon"),
             alt=value.get("alt"),
         )
-

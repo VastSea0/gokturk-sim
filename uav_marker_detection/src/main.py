@@ -23,6 +23,7 @@ from communication.udp_bridge import UDPJsonBridge
 from detection.adaptive_color_detector import AdaptiveColorMarkerDetector
 from detection.hybrid_marker_detector import HybridMarkerDetector
 from detection.hsv_marker_detector import HSVMarkerDetector
+from detection.postprocess import DetectionPostProcessor
 from detection.yolo_marker_detector import YOLOMarkerDetector
 from geometry.coordinate_transform import CameraGeometry, estimate_positions
 from tracking.centroid_tracker import CentroidTracker
@@ -52,6 +53,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--show", action="store_true", help="Show OpenCV debug window")
     parser.add_argument("--draw-debug", action="store_true", help="Draw boxes on debug output")
     parser.add_argument("--debug-view", choices=["overlay", "mask_overlay", "mask_red", "mask_blue", "mask_combined"], default="overlay")
+    parser.add_argument("--shape-filter", action="store_true", help="Enable 2x2 square marker shape filtering")
+    parser.add_argument("--nms", action="store_true", help="Enable class-aware non-maximum suppression")
+    parser.add_argument("--nms-iou", type=float, help="Override NMS IoU threshold")
     parser.add_argument("--no-tracking", action="store_true", help="Disable temporal smoothing/tracking")
     parser.add_argument("--print-empty", action="store_true", help="Print frames even when no marker is detected")
     parser.add_argument("--max-frames", type=int, help="Stop after N frames, useful for tests")
@@ -147,6 +151,9 @@ def apply_cli_overrides(args: argparse.Namespace, config: Dict[str, Any]) -> Dic
     mav_cfg = communication.setdefault("mavlink", {})
     debug_cfg = config.setdefault("debug", {})
     tracking_cfg = config.setdefault("tracking", {})
+    postprocess_cfg = config.setdefault("postprocess", {})
+    square_cfg = postprocess_cfg.setdefault("square_filter", {})
+    nms_cfg = postprocess_cfg.setdefault("nms", {})
 
     if args.print_empty:
         console_cfg["print_empty_frames"] = True
@@ -173,6 +180,12 @@ def apply_cli_overrides(args: argparse.Namespace, config: Dict[str, Any]) -> Dic
         debug_cfg["draw"] = True
     if args.debug_view:
         debug_cfg["view"] = args.debug_view
+    if args.shape_filter:
+        square_cfg["enabled"] = True
+    if args.nms:
+        nms_cfg["enabled"] = True
+    if args.nms_iou is not None:
+        nms_cfg["iou_threshold"] = float(args.nms_iou)
     if args.no_tracking:
         tracking_cfg["enabled"] = False
     return config
@@ -198,6 +211,7 @@ def main() -> int:
     processing_cfg = get_nested(config, "processing", {})
     geometry_cfg = get_nested(config, "geometry", {})
     tracking_cfg = get_nested(config, "tracking", {})
+    postprocess_cfg = get_nested(config, "postprocess", {})
 
     json_logger = JSONLogger(json_cfg.get("path"), enabled=bool(json_cfg.get("enabled", False)))
     udp_bridge = UDPJsonBridge(
@@ -207,6 +221,7 @@ def main() -> int:
         broadcast=bool(udp_cfg.get("broadcast", False)),
     )
     mavlink_bridge = MavlinkBridge(mav_cfg)
+    postprocessor = DetectionPostProcessor(postprocess_cfg)
     tracker = None
     if bool(tracking_cfg.get("enabled", True)):
         tracker = CentroidTracker(
@@ -253,6 +268,7 @@ def main() -> int:
             frame = maybe_resize(frame, resize_width)
 
             detections = detector.detect(frame)
+            detections = postprocessor.apply(detections)
             if tracker is not None:
                 detections = tracker.update(detections, frame_id)
             telemetry = mavlink_bridge.poll_telemetry()

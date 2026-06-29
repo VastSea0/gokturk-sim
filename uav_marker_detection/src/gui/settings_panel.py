@@ -57,6 +57,14 @@ class SettingsPanel(QtWidgets.QGroupBox):
 
         self.draw_check = QtWidgets.QCheckBox("Draw overlay")
         self.draw_check.setChecked(True)
+
+        post_cfg = config.get("postprocess", {})
+        square_cfg = post_cfg.get("square_filter", {})
+        nms_cfg = post_cfg.get("nms", {})
+        self.shape_filter_check = QtWidgets.QCheckBox("2x2 square shape filter")
+        self.shape_filter_check.setChecked(bool(square_cfg.get("enabled", False)))
+        self.nms_check = QtWidgets.QCheckBox("NMS")
+        self.nms_check.setChecked(bool(nms_cfg.get("enabled", False)))
  
         self.invert_colors_check = QtWidgets.QCheckBox("Invert colors (Red/Blue swap)")
         self.invert_colors_check.setChecked(False)
@@ -83,6 +91,8 @@ class SettingsPanel(QtWidgets.QGroupBox):
         form.addRow("UDP host", self.udp_host_edit)
         form.addRow("UDP port", self.udp_port_spin)
         form.addRow("", self.draw_check)
+        form.addRow("", self.shape_filter_check)
+        form.addRow("", self.nms_check)
         form.addRow("", self.invert_colors_check)
         form.addRow("", self.swap_labels_check)
  
@@ -130,6 +140,10 @@ class SettingsPanel(QtWidgets.QGroupBox):
             },
             "draw": self.draw_check.isChecked(),
             "debug_view": self.debug_view_combo.currentText(),
+            "postprocess": {
+                "square_filter": {"enabled": self.shape_filter_check.isChecked()},
+                "nms": {"enabled": self.nms_check.isChecked()},
+            },
             "invert_colors": self.invert_colors_check.isChecked(),
             "swap_labels": self.swap_labels_check.isChecked(),
         }

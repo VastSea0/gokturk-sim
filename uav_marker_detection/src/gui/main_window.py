@@ -16,6 +16,7 @@ from communication.telemetry_state import TelemetryState
 from detection.adaptive_color_detector import AdaptiveColorMarkerDetector
 from detection.hybrid_marker_detector import HybridMarkerDetector
 from detection.hsv_marker_detector import HSVMarkerDetector
+from detection.postprocess import DetectionPostProcessor
 from detection.yolo_marker_detector import YOLOMarkerDetector
 from main import frame_result, maybe_resize
 from tracking.centroid_tracker import CentroidTracker
@@ -77,6 +78,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.source: Optional[Any] = None
         self.detector: Optional[Any] = None
+        self.postprocessor: Optional[DetectionPostProcessor] = None
         self.tracker: Optional[CentroidTracker] = None
         self.reporter: Optional[TargetReporter] = None
         self.mavlink_bridge = MavlinkBridge(get_nested(self.config, "communication.mavlink", {}))
@@ -101,6 +103,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.last_runtime_settings = settings
         try:
             self.detector = self._build_detector(settings)
+            self.postprocessor = self._build_postprocessor(settings)
             self.tracker = self._build_tracker()
             self.source = self._build_source(settings)
             self.source.start()
@@ -128,6 +131,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.reporter.close()
         self.source = None
         self.detector = None
+        self.postprocessor = None
         self.tracker = None
         self.reporter = None
         self.video_widget.clear_frame()
@@ -154,6 +158,8 @@ class MainWindow(QtWidgets.QMainWindow):
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
  
         detections = self.detector.detect(frame)
+        if self.postprocessor is not None:
+            detections = self.postprocessor.apply(detections)
         if self.tracker is not None:
             detections = self.tracker.update(detections, self.frame_id)
  
@@ -270,6 +276,14 @@ class MainWindow(QtWidgets.QMainWindow):
             smoothing_alpha=float(tracking_cfg.get("smoothing_alpha", 0.45)),
             stale_confidence_decay=float(tracking_cfg.get("stale_confidence_decay", 0.65)),
         )
+
+    def _build_postprocessor(self, settings: Dict[str, Any]) -> DetectionPostProcessor:
+        post_cfg = copy.deepcopy(get_nested(self.config, "postprocess", {}))
+        runtime_cfg = settings.get("postprocess", {}) or {}
+        for section_name in ("square_filter", "nms"):
+            section = post_cfg.setdefault(section_name, {})
+            section.update(runtime_cfg.get(section_name, {}) or {})
+        return DetectionPostProcessor(post_cfg)
 
     def _build_reporter(self, settings: Dict[str, Any]) -> TargetReporter:
         use_mavlink = settings.get("mode") == "camera_mavlink"

@@ -17,6 +17,9 @@ class _Track:
     quality: float
     area_px: float
     mask_polygon: Optional[List[Tuple[float, float]]]
+    shape_name: Optional[str] = None
+    shape_score: Optional[float] = None
+    shape_metrics: Optional[Dict[str, float]] = None
     missed: int = 0
     last_frame_id: int = 0
 
@@ -84,6 +87,9 @@ class CentroidTracker:
             quality=float(detection.quality),
             area_px=float(detection.area_px),
             mask_polygon=detection.mask_polygon,
+            shape_name=detection.shape_name,
+            shape_score=detection.shape_score,
+            shape_metrics=detection.shape_metrics,
             missed=0,
             last_frame_id=frame_id,
         )
@@ -104,6 +110,9 @@ class CentroidTracker:
         track.quality = max(float(detection.quality), 0.70 * track.quality + 0.30 * float(detection.quality))
         track.area_px = alpha * float(detection.area_px) + (1.0 - alpha) * track.area_px
         track.mask_polygon = detection.mask_polygon
+        track.shape_name = detection.shape_name
+        track.shape_score = detection.shape_score
+        track.shape_metrics = detection.shape_metrics
         track.missed = 0
         track.last_frame_id = frame_id
 
@@ -124,6 +133,9 @@ class CentroidTracker:
                     stale_frames=track.missed,
                     mask_polygon=track.mask_polygon,
                     detector_name="tracked",
+                    shape_name=track.shape_name,
+                    shape_score=track.shape_score,
+                    shape_metrics=track.shape_metrics,
                 )
             )
         detections.sort(key=lambda item: (item.stale_frames, -item.confidence))
