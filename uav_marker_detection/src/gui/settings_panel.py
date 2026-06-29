@@ -59,9 +59,12 @@ class SettingsPanel(QtWidgets.QGroupBox):
         self.draw_check.setChecked(True)
 
         self.start_button = QtWidgets.QPushButton("Start")
+        self.start_button.setObjectName("start_button")
         self.stop_button = QtWidgets.QPushButton("Stop")
+        self.stop_button.setObjectName("stop_button")
 
         form = QtWidgets.QFormLayout()
+        form.setSpacing(10)
         form.addRow("Mode", self.mode_combo)
         form.addRow("Source", self.source_combo)
         form.addRow("Video", self._row(self.video_edit, self.video_browse_button))
@@ -76,10 +79,13 @@ class SettingsPanel(QtWidgets.QGroupBox):
         form.addRow("", self.draw_check)
 
         buttons = QtWidgets.QHBoxLayout()
+        buttons.setSpacing(10)
         buttons.addWidget(self.start_button)
         buttons.addWidget(self.stop_button)
 
         layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(16, 24, 16, 16)
+        layout.setSpacing(16)
         layout.addLayout(form)
         layout.addLayout(buttons)
 

@@ -27,6 +27,8 @@ class DetectionPanel(QtWidgets.QWidget):
         self.table.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
 
         layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(8, 16, 8, 8)
+        layout.setSpacing(12)
         layout.addWidget(self.summary_label)
         layout.addWidget(self.table)
 

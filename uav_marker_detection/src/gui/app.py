@@ -47,6 +47,13 @@ def main() -> int:
     config = load_config(config_path)
     app = QtWidgets.QApplication([sys.argv[0]])
     app.setApplicationName("UAV Marker Detection")
+    
+    try:
+        from gui.style import MATERIAL3_STYLE
+        app.setStyleSheet(MATERIAL3_STYLE)
+    except ImportError:
+        pass
+        
     window = MainWindow(config=config, config_path=config_path, project_dir=PROJECT_DIR)
     window.statusBar().showMessage(f"Loaded {config_path} with {QT_API}")
     window.show()
