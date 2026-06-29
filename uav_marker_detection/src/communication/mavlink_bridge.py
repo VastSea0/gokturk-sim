@@ -24,12 +24,22 @@ class MavlinkBridge:
         self.statustext_min_interval_s = 1.0
         self.auto_request_streams = True
         self.request_stream_rate_hz = 5
+        self.stream_request_interval_s = 5.0
+        self.reconnect_enabled = True
+        self.heartbeat_loss_timeout_s = 8.0
+        self.no_message_timeout_s = 8.0
+        self.reconnect_interval_s = 3.0
         self.master: Optional[Any] = None
         self.mavutil: Optional[Any] = None
         self.last_statustext_s = 0.0
         self.last_message_s: Optional[float] = None
         self.last_heartbeat_s: Optional[float] = None
+        self.last_connect_s: Optional[float] = None
+        self.last_connect_attempt_s: Optional[float] = None
+        self.last_stream_request_s: Optional[float] = None
         self.last_error: Optional[str] = None
+        self.connect_attempt_count = 0
+        self.reconnect_count = 0
         self.streams_requested = False
         self.message_counts: Dict[str, int] = {}
         self.message_timestamps: Dict[str, float] = {}
@@ -93,6 +103,11 @@ class MavlinkBridge:
         self.statustext_min_interval_s = float(cfg.get("statustext_min_interval_s", 1.0))
         self.auto_request_streams = bool(cfg.get("auto_request_streams", True))
         self.request_stream_rate_hz = int(cfg.get("request_stream_rate_hz", 5))
+        self.stream_request_interval_s = float(cfg.get("stream_request_interval_s", 5.0))
+        self.reconnect_enabled = bool(cfg.get("reconnect_enabled", True))
+        self.heartbeat_loss_timeout_s = float(cfg.get("heartbeat_loss_timeout_s", 8.0))
+        self.no_message_timeout_s = float(cfg.get("no_message_timeout_s", 8.0))
+        self.reconnect_interval_s = float(cfg.get("reconnect_interval_s", 3.0))
         self.last_error = None
 
     def connect(self) -> None:
@@ -112,6 +127,10 @@ class MavlinkBridge:
             self.enabled = False
             return
 
+        now = time.monotonic()
+        self.last_connect_attempt_s = now
+        self.connect_attempt_count += 1
+
         try:
             self.mavutil = mavutil
             self.master = mavutil.mavlink_connection(
@@ -120,6 +139,7 @@ class MavlinkBridge:
                 source_system=191,
                 source_component=191,
             )
+            self.last_connect_s = now
             if self.heartbeat_timeout_s > 0:
                 heartbeat = self.master.wait_heartbeat(timeout=self.heartbeat_timeout_s)
                 if heartbeat is not None:
@@ -127,15 +147,17 @@ class MavlinkBridge:
                     self.last_heartbeat_s = now
                     self.last_message_s = now
                     self._handle_heartbeat(heartbeat, now)
-                    self._request_telemetry_streams()
+                    self._request_telemetry_streams(force=True)
             LOGGER.info("MAVLink bridge connected: %s", self.connection_string)
         except Exception as exc:
             self.last_error = f"Could not open MAVLink connection {self.connection_string}: {exc}"
             LOGGER.warning("%s", self.last_error)
             self.master = None
-            self.enabled = False
+            if not self.reconnect_enabled:
+                self.enabled = False
 
     def poll_telemetry(self, max_messages: int = 100) -> Dict[str, Any]:
+        self._maybe_reconnect()
         if not self.enabled or self.master is None:
             return dict(self.telemetry)
 
@@ -218,6 +240,7 @@ class MavlinkBridge:
                 self.telemetry["rc_rssi"] = None if int(msg.rssi) == 255 else int(msg.rssi)
             elif msg_type in {"EKF_STATUS_REPORT", "ESTIMATOR_STATUS"}:
                 self.telemetry["ekf_flags"] = int(getattr(msg, "flags", 0))
+        self._request_telemetry_streams()
         return dict(self.telemetry)
 
     def _handle_heartbeat(self, msg: Any, now: float) -> None:
@@ -233,9 +256,13 @@ class MavlinkBridge:
             except Exception:
                 pass
 
-    def _request_telemetry_streams(self) -> None:
-        if not self.auto_request_streams or self.streams_requested or self.master is None or self.mavutil is None:
+    def _request_telemetry_streams(self, force: bool = False) -> None:
+        if not self.auto_request_streams or self.master is None or self.mavutil is None:
             return
+        now = time.monotonic()
+        if not force and self.last_stream_request_s is not None:
+            if now - self.last_stream_request_s < self.stream_request_interval_s:
+                return
         target_system = int(getattr(self.master, "target_system", 0) or 1)
         target_component = int(getattr(self.master, "target_component", 0) or 1)
         rate_hz = max(1, int(self.request_stream_rate_hz))
@@ -287,6 +314,35 @@ class MavlinkBridge:
             except Exception as exc:
                 LOGGER.debug("MAVLink SET_MESSAGE_INTERVAL failed for %s: %s", name, exc)
         self.streams_requested = True
+        self.last_stream_request_s = now
+
+    def _maybe_reconnect(self) -> None:
+        if not self.enabled or not self.reconnect_enabled:
+            return
+
+        now = time.monotonic()
+        if self.master is None:
+            if self.last_connect_attempt_s is None or now - self.last_connect_attempt_s >= self.reconnect_interval_s:
+                self.reconnect_count += 1
+                self.connect()
+            return
+
+        connected_for = now - self.last_connect_s if self.last_connect_s is not None else 0.0
+        no_heartbeat = self.last_heartbeat_s is None and connected_for >= self.heartbeat_loss_timeout_s
+        heartbeat_stale = self.last_heartbeat_s is not None and now - self.last_heartbeat_s >= self.heartbeat_loss_timeout_s
+        no_messages = self.last_message_s is None and connected_for >= self.no_message_timeout_s
+        messages_stale = self.last_message_s is not None and now - self.last_message_s >= self.no_message_timeout_s
+
+        if no_heartbeat or heartbeat_stale or no_messages or messages_stale:
+            if self.last_connect_attempt_s is not None and now - self.last_connect_attempt_s < self.reconnect_interval_s:
+                return
+            self.last_error = (
+                "MAVLink heartbeat/message timeout; reconnecting "
+                f"{self.connection_string}"
+            )
+            LOGGER.warning("%s", self.last_error)
+            self.reconnect_count += 1
+            self.connect()
 
     def is_link_open(self) -> bool:
         return self.enabled and self.master is not None
@@ -306,6 +362,8 @@ class MavlinkBridge:
             "last_message_age_s": self._age(self.last_message_s),
             "last_heartbeat_age_s": self._age(self.last_heartbeat_s),
             "message_counts": dict(self.message_counts),
+            "connect_attempt_count": self.connect_attempt_count,
+            "reconnect_count": self.reconnect_count,
             "last_error": self.last_error,
         }
 
@@ -354,6 +412,8 @@ class MavlinkBridge:
         self.mavutil = None
         self.last_message_s = None
         self.last_heartbeat_s = None
+        self.last_connect_s = None
+        self.last_stream_request_s = None
         self.streams_requested = False
 
     def disconnect(self) -> None:

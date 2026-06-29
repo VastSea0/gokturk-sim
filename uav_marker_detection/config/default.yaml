@@ -170,6 +170,11 @@ communication:
     heartbeat_timeout_s: 0
     auto_request_streams: true
     request_stream_rate_hz: 5
+    stream_request_interval_s: 5.0
+    reconnect_enabled: true
+    heartbeat_loss_timeout_s: 8.0
+    no_message_timeout_s: 8.0
+    reconnect_interval_s: 3.0
     send_statustext: true
     statustext_min_interval_s: 1.0
 

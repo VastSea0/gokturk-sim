@@ -25,6 +25,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--weights", help="YOLO/hybrid weights path")
     parser.add_argument("--video", help="Video path for simulation/video test mode")
     parser.add_argument("--camera-index", type=int, help="OpenCV webcam index on Mac/Linux")
+    parser.add_argument("--mavlink", help="Auto-connect GUI MAVLink panel, e.g. udpin:0.0.0.0:14550")
+    parser.add_argument("--mavlink-baud", type=int, default=57600)
+    parser.add_argument("--auto-connect-mavlink", action="store_true")
     return parser.parse_args()
 
 
@@ -101,6 +104,9 @@ def resolve_initial_settings(config: Dict[str, Any], args: argparse.Namespace) -
         "video": str(video_path) if video_path is not None else "",
         "camera_index": camera_index,
         "platform_profile": platform_profile_name(),
+        "mavlink": args.mavlink,
+        "mavlink_baud": int(args.mavlink_baud),
+        "auto_connect_mavlink": bool(args.auto_connect_mavlink or args.mavlink),
     }
 
 

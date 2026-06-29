@@ -67,6 +67,19 @@ python3 src/main.py --config config/default.yaml --detector color --source pi --
 
 `udpout:127.0.0.1:14550` yalnızca QGroundControl gibi bir endpoint'e mesaj göndermek için kullanılabilir; Pixhawk'tan gelen telemetriyi dinlemek için genelde `udpin:0.0.0.0:14550` gerekir.
 
+Pi üzerinde MAVLink heartbeat/telemetry teşhisi:
+
+```bash
+./scripts/pi_mavlink_monitor.sh
+python3 scripts/mavlink_diagnostics.py --auto-udp --timeout 45
+```
+
+GUI'yi Pi Camera + Pixhawk UDP auto-connect ile açmak için:
+
+```bash
+./scripts/run_pi5_gui_pixhawk_udp.sh
+```
+
 YOLO inference:
 
 ```bash

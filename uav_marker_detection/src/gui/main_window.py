@@ -104,6 +104,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.statusBar().showMessage("Ready")
         self.connection_panel.update_telemetry(TelemetryState())
         self.telemetry_timer.start()
+        if self.initial_settings.get("auto_connect_mavlink"):
+            QtCore.QTimer.singleShot(0, self._auto_connect_mavlink)
 
     def start_processing(self, settings: Dict[str, Any]) -> None:
         self.stop_processing()
@@ -232,6 +234,31 @@ class MainWindow(QtWidgets.QMainWindow):
         self.last_telemetry_state = TelemetryState()
         self.connection_panel.update_telemetry(self.last_telemetry_state)
         self.statusBar().showMessage("MAVLink disconnected")
+
+    def _auto_connect_mavlink(self) -> None:
+        connection_string = self.initial_settings.get("mavlink") or get_nested(
+            self.config,
+            "communication.mavlink.connection_string",
+            "udpin:0.0.0.0:14550",
+        )
+        baud = int(self.initial_settings.get("mavlink_baud", 57600))
+        if str(connection_string).startswith("/") or str(connection_string).startswith("com"):
+            self.connection_panel.type_combo.setCurrentText("serial")
+            self.connection_panel.serial_port_combo.setCurrentText(str(connection_string))
+            self.connection_panel.baud_combo.setCurrentText(str(baud))
+        else:
+            self.connection_panel.type_combo.setCurrentText("udp")
+            self.connection_panel.udp_edit.setText(str(connection_string))
+        self.connect_mavlink(
+            {
+                "enabled": True,
+                "type": self.connection_panel.type_combo.currentText(),
+                "connection_string": str(connection_string),
+                "baud": baud,
+                "send_statustext": True,
+                "heartbeat_timeout_s": 0,
+            }
+        )
 
     def closeEvent(self, event) -> None:
         self.stop_processing()

@@ -62,6 +62,12 @@ python3 src/gui/app.py --config config/default.yaml
 
 Arayüzde `Run settings` panelinde `Camera + processing`, kaynak olarak `pi`, detector olarak `color` seçin ve `Start` düğmesine basın. Maviyi debug etmek için `Debug view` alanında `mask_blue` veya `mask_overlay` seçin.
 
+Ortak GUI runner:
+
+```bash
+./scripts/run_gui.sh
+```
+
 ## 4. Detector Çalıştırma
 
 Temel çalışma:
@@ -146,6 +152,32 @@ python3 src/main.py --config config/default.yaml --detector color --source pi --
 ```
 
 Pixhawk/PX4 telemetrisini UDP üzerinden Raspberry Pi'da dinlemek için genelde `udpin:0.0.0.0:14550` kullanılır. `udpout:127.0.0.1:14550` ise QGroundControl gibi bir endpoint'e sadece mesaj göndermek için kullanılabilir.
+
+Önce bağlantıyı kamera/GUI'den bağımsız test edin:
+
+```bash
+./scripts/pi_mavlink_monitor.sh
+```
+
+Alternatif portları otomatik denemek için:
+
+```bash
+python3 scripts/mavlink_diagnostics.py --auto-udp --timeout 45
+```
+
+`heartbeat=OK` görürseniz Pixhawk verisi Pi'ye geliyor demektir. `heartbeat=WAIT` sürekli kalıyorsa uygulama değil, Pixhawk/PX4 tarafı bu Pi IP/portuna MAVLink heartbeat göndermiyor demektir.
+
+GUI'yi Pixhawk UDP bağlantısıyla otomatik açmak için:
+
+```bash
+./scripts/run_pi5_gui_pixhawk_udp.sh
+```
+
+Farklı port:
+
+```bash
+PORT=14540 ./scripts/run_pi5_gui_pixhawk_udp.sh
+```
 
 QGroundControl tarafında marker özetleri `STATUSTEXT` olarak görülebilir. Daha zengin entegrasyon için UDP JSON çıkışını bir ground-station uygulaması okuyabilir:
 
@@ -252,6 +284,12 @@ GUI'de UDP testi:
 3. `Connect` düğmesine basın.
 4. Durum `Heartbeat OK` olmalı; yalnızca `Link open, waiting heartbeat` görünüyorsa UDP port açık ama Pixhawk heartbeat paketi gelmiyor demektir.
 5. QGroundControl açıkken `STATUSTEXT` mesajlarını kontrol edin.
+
+Bağlantı bir süre sonra susarsa `MavlinkBridge` heartbeat/message timeout durumunda otomatik reconnect yapar ve telemetry stream isteklerini periyodik tekrarlar. Buna rağmen `Heartbeat OK` dönmüyorsa terminalde şu komutu çalıştırın:
+
+```bash
+./scripts/pi_mavlink_monitor.sh udpin:0.0.0.0:14550
+```
 
 Serial test için QGroundControl aynı anda aynı serial portu açmamalıdır; portu tek süreç kullanabilir.
 
