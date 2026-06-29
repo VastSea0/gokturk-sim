@@ -35,7 +35,7 @@ class SettingsPanel(QtWidgets.QGroupBox):
         self.video_browse_button = QtWidgets.QPushButton("Browse")
 
         self.detector_combo = QtWidgets.QComboBox()
-        self.detector_combo.addItems(["color", "hsv", "yolo", "yolo_seg"])
+        self.detector_combo.addItems(["hsv", "color", "yolo", "yolo_seg"])
         yolo_cfg = config.get("detection", {}).get("yolo", {})
         self.weights_edit = QtWidgets.QLineEdit(str(project_dir / yolo_cfg.get("weights_path", "models/best.pt")))
         self.weights_browse_button = QtWidgets.QPushButton("Browse")
