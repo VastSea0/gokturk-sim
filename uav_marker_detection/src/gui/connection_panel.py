@@ -38,10 +38,14 @@ class ConnectionPanel(QtWidgets.QGroupBox):
         self.telemetry_label.setWordWrap(True)
 
         self.connect_button = QtWidgets.QPushButton("Connect")
+        self.connect_button.setObjectName("connect_button")
         self.disconnect_button = QtWidgets.QPushButton("Disconnect")
+        self.disconnect_button.setObjectName("disconnect_button")
         self.refresh_button = QtWidgets.QPushButton("Refresh ports")
+        self.refresh_button.setObjectName("refresh_button")
 
         form = QtWidgets.QFormLayout()
+        form.setSpacing(10)
         form.addRow("Type", self.type_combo)
         form.addRow("Serial port", self.serial_port_combo)
         form.addRow("Baudrate", self.baud_combo)
@@ -50,11 +54,14 @@ class ConnectionPanel(QtWidgets.QGroupBox):
         form.addRow("Telemetry", self.telemetry_label)
 
         button_row = QtWidgets.QHBoxLayout()
+        button_row.setSpacing(10)
         button_row.addWidget(self.connect_button)
         button_row.addWidget(self.disconnect_button)
         button_row.addWidget(self.refresh_button)
 
         layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(16, 24, 16, 16)
+        layout.setSpacing(16)
         layout.addLayout(form)
         layout.addLayout(button_row)
 

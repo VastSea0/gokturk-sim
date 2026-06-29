@@ -18,28 +18,28 @@ processing:
 
 detection:
   color:
-    min_area_px: 220
-    max_area_fraction: 0.70
-    min_color_fill: 0.18
-    max_aspect_ratio: 7.0
+    min_area_px: 500
+    max_area_fraction: 0.50
+    min_color_fill: 0.35
+    max_aspect_ratio: 4.0
     blur_kernel_size: 3
-    morph_kernel_size: 5
+    morph_kernel_size: 7
     morph_iterations: 2
-    max_markers_per_color: 12
+    max_markers_per_color: 3
     use_clahe: true
     red_hsv_ranges:
-      - lower: [0, 45, 35]
-        upper: [18, 255, 255]
-      - lower: [160, 45, 35]
+      - lower: [0, 80, 50]
+        upper: [12, 255, 255]
+      - lower: [165, 80, 50]
         upper: [179, 255, 255]
     blue_hsv_ranges:
-      - lower: [82, 35, 25]
-        upper: [148, 255, 255]
-    red_dominance_min: 0.055
-    blue_dominance_min: 0.045
-    min_channel_value: 28
-    red_lab_a_min: 142
-    blue_lab_b_max: 122
+      - lower: [95, 80, 40]
+        upper: [135, 255, 255]
+    red_dominance_min: 0.12
+    blue_dominance_min: 0.10
+    min_channel_value: 40
+    red_lab_a_min: 148
+    blue_lab_b_max: 112
   hsv:
     min_area_px: 400
     max_area_fraction: 0.65

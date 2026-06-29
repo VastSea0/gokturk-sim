@@ -35,7 +35,7 @@ class SettingsPanel(QtWidgets.QGroupBox):
         self.video_browse_button = QtWidgets.QPushButton("Browse")
 
         self.detector_combo = QtWidgets.QComboBox()
-        self.detector_combo.addItems(["color", "hsv", "yolo", "yolo_seg"])
+        self.detector_combo.addItems(["hsv", "color", "yolo", "yolo_seg"])
         yolo_cfg = config.get("detection", {}).get("yolo", {})
         self.weights_edit = QtWidgets.QLineEdit(str(project_dir / yolo_cfg.get("weights_path", "models/best.pt")))
         self.weights_browse_button = QtWidgets.QPushButton("Browse")
@@ -57,11 +57,20 @@ class SettingsPanel(QtWidgets.QGroupBox):
 
         self.draw_check = QtWidgets.QCheckBox("Draw overlay")
         self.draw_check.setChecked(True)
+ 
+        self.invert_colors_check = QtWidgets.QCheckBox("Invert colors (Red/Blue swap)")
+        self.invert_colors_check.setChecked(False)
+ 
+        self.swap_labels_check = QtWidgets.QCheckBox("Swap Red/Blue labels")
+        self.swap_labels_check.setChecked(False)
 
         self.start_button = QtWidgets.QPushButton("Start")
+        self.start_button.setObjectName("start_button")
         self.stop_button = QtWidgets.QPushButton("Stop")
+        self.stop_button.setObjectName("stop_button")
 
         form = QtWidgets.QFormLayout()
+        form.setSpacing(10)
         form.addRow("Mode", self.mode_combo)
         form.addRow("Source", self.source_combo)
         form.addRow("Video", self._row(self.video_edit, self.video_browse_button))
@@ -74,12 +83,17 @@ class SettingsPanel(QtWidgets.QGroupBox):
         form.addRow("UDP host", self.udp_host_edit)
         form.addRow("UDP port", self.udp_port_spin)
         form.addRow("", self.draw_check)
-
+        form.addRow("", self.invert_colors_check)
+        form.addRow("", self.swap_labels_check)
+ 
         buttons = QtWidgets.QHBoxLayout()
+        buttons.setSpacing(10)
         buttons.addWidget(self.start_button)
         buttons.addWidget(self.stop_button)
 
         layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(16, 24, 16, 16)
+        layout.setSpacing(16)
         layout.addLayout(form)
         layout.addLayout(buttons)
 
@@ -116,6 +130,8 @@ class SettingsPanel(QtWidgets.QGroupBox):
             },
             "draw": self.draw_check.isChecked(),
             "debug_view": self.debug_view_combo.currentText(),
+            "invert_colors": self.invert_colors_check.isChecked(),
+            "swap_labels": self.swap_labels_check.isChecked(),
         }
 
     def _emit_start(self) -> None:

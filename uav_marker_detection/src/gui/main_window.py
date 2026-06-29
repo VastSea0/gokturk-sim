@@ -140,9 +140,22 @@ class MainWindow(QtWidgets.QMainWindow):
         self.frame_id += 1
         resize_width = int(get_nested(self.config, "processing.resize_width", 0) or 0)
         frame = maybe_resize(frame, resize_width)
+ 
+        # Invert colors (swap Red and Blue channels) if requested by the user
+        if self.last_runtime_settings.get("invert_colors", False):
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+ 
         detections = self.detector.detect(frame)
         if self.tracker is not None:
             detections = self.tracker.update(detections, self.frame_id)
+ 
+        # Swap Red (enemy) and Blue (ally) labels if requested by the user
+        if self.last_runtime_settings.get("swap_labels", False):
+            for d in detections:
+                if d.class_name == "red_marker":
+                    d.class_name = "blue_marker"
+                elif d.class_name == "blue_marker":
+                    d.class_name = "red_marker"
 
         telemetry_state = self._current_telemetry_state()
         result = frame_result(

@@ -47,16 +47,13 @@ class PiCameraSource:
         frame = self.picam2.capture_array()
         if frame is None:
             return None
+        # Strip alpha if present (RGBA)
         if len(frame.shape) == 3 and frame.shape[2] == 4:
             frame = frame[:, :, :3]
-            
-        # Due to picamera2/libcamera packaging/driver quirks:
-        # - "RGB888" config actually returns BGR-ordered array data.
-        # - "BGR888" config actually returns RGB-ordered array data.
-        if self.output_format.startswith("BGR"):
-            return cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-        
-        # For "RGB888" it is already BGR, return directly.
+        # picamera2 on Pi 5 / PiSP:
+        # - BGR888 config → actual BGR data (pass through to OpenCV directly)
+        # - RGB888 config → actual BGR data (same physical layout, pass through)
+        # No channel conversion needed for either format.
         return frame
 
     def release(self) -> None:
