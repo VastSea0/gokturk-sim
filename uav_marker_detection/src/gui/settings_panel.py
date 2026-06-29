@@ -57,6 +57,12 @@ class SettingsPanel(QtWidgets.QGroupBox):
 
         self.draw_check = QtWidgets.QCheckBox("Draw overlay")
         self.draw_check.setChecked(True)
+ 
+        self.invert_colors_check = QtWidgets.QCheckBox("Invert colors (Red/Blue swap)")
+        self.invert_colors_check.setChecked(False)
+ 
+        self.swap_labels_check = QtWidgets.QCheckBox("Swap Red/Blue labels")
+        self.swap_labels_check.setChecked(False)
 
         self.start_button = QtWidgets.QPushButton("Start")
         self.start_button.setObjectName("start_button")
@@ -77,7 +83,9 @@ class SettingsPanel(QtWidgets.QGroupBox):
         form.addRow("UDP host", self.udp_host_edit)
         form.addRow("UDP port", self.udp_port_spin)
         form.addRow("", self.draw_check)
-
+        form.addRow("", self.invert_colors_check)
+        form.addRow("", self.swap_labels_check)
+ 
         buttons = QtWidgets.QHBoxLayout()
         buttons.setSpacing(10)
         buttons.addWidget(self.start_button)
@@ -122,6 +130,8 @@ class SettingsPanel(QtWidgets.QGroupBox):
             },
             "draw": self.draw_check.isChecked(),
             "debug_view": self.debug_view_combo.currentText(),
+            "invert_colors": self.invert_colors_check.isChecked(),
+            "swap_labels": self.swap_labels_check.isChecked(),
         }
 
     def _emit_start(self) -> None:
