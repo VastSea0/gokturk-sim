@@ -34,17 +34,24 @@ from .video_widget import VideoWidget
 class MainWindow(QtWidgets.QMainWindow):
     """Operator GUI for live camera preview, marker detection, and safe reporting."""
 
-    def __init__(self, config: Dict[str, Any], config_path: Path, project_dir: Path) -> None:
+    def __init__(
+        self,
+        config: Dict[str, Any],
+        config_path: Path,
+        project_dir: Path,
+        initial_settings: Optional[Dict[str, Any]] = None,
+    ) -> None:
         super().__init__()
         self.config = copy.deepcopy(config)
         self.config_path = config_path
         self.project_dir = project_dir
+        self.initial_settings = initial_settings or {}
 
         self.setWindowTitle("UAV Marker Detection")
         self.resize(1320, 780)
 
         self.video_widget = VideoWidget()
-        self.settings_panel = SettingsPanel(self.config, self.project_dir)
+        self.settings_panel = SettingsPanel(self.config, self.project_dir, initial_settings=self.initial_settings)
         self.connection_panel = ConnectionPanel()
         self.detection_panel = DetectionPanel()
         self.runtime_label = QtWidgets.QLabel("FPS: - | Model: - | Camera: stopped | Telemetry: disconnected")
@@ -152,6 +159,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.frame_id += 1
         resize_width = int(get_nested(self.config, "processing.resize_width", 0) or 0)
         frame = maybe_resize(frame, resize_width)
+        self._refresh_live_runtime_settings()
  
         # Invert colors (swap Red and Blue channels) if requested by the user
         if self.last_runtime_settings.get("invert_colors", False):
@@ -261,7 +269,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if source_name == "webcam":
             camera_cfg = get_nested(self.config, "camera", {})
             return WebcamCamera(
-                camera_index=0,
+                camera_index=int(settings.get("camera_index", 0)),
                 width=int(camera_cfg.get("width", 640)),
                 height=int(camera_cfg.get("height", 480)),
                 fps=int(camera_cfg.get("fps", 20)),
@@ -284,6 +292,12 @@ class MainWindow(QtWidgets.QMainWindow):
             section = post_cfg.setdefault(section_name, {})
             section.update(runtime_cfg.get(section_name, {}) or {})
         return DetectionPostProcessor(post_cfg)
+
+    def _refresh_live_runtime_settings(self) -> None:
+        current = self.settings_panel.runtime_settings()
+        for key in ("draw", "debug_view", "invert_colors", "swap_labels", "postprocess"):
+            self.last_runtime_settings[key] = current.get(key)
+        self.postprocessor = self._build_postprocessor(self.last_runtime_settings)
 
     def _build_reporter(self, settings: Dict[str, Any]) -> TargetReporter:
         use_mavlink = settings.get("mode") == "camera_mavlink"

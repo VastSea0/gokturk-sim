@@ -168,7 +168,13 @@ Masaüstü oturumu veya ekran bağlı Pi üzerinde:
 
 ```bash
 source .venv/bin/activate
-python3 src/gui/app.py --config config/default.yaml
+./scripts/run_gui.sh
+```
+
+Pi üzerinde GUI varsayılan kaynak olarak `pi` seçer. Manuel çalıştırma:
+
+```bash
+python3 src/gui/app.py --config config/default.yaml --source pi
 ```
 
 Arayüz modları:

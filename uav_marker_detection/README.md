@@ -103,13 +103,28 @@ python3 src/main.py --config config/default.yaml --detector color --source video
 Qt tabanlı canlı arayüz:
 
 ```bash
-python3 src/gui/app.py --config config/default.yaml
+./scripts/run_gui.sh
+```
+
+`run_gui.sh` platformu otomatik seçer: Raspberry Pi üzerinde kaynak varsayılanı `pi`, MacBook üzerinde `webcam` olur. Manuel override:
+
+```bash
+python3 src/gui/app.py --config config/default.yaml --source pi
+python3 src/gui/app.py --config config/default.yaml --source webcam --camera-index 0
+python3 src/gui/app.py --config config/default.yaml --source video --video sample_data/test.mp4
 ```
 
 Arayüzde canlı kamera/video görüntüsü, bbox/label/confidence/merkez overlay, anlık tespit tablosu, FPS/model/kamera/telemetry durumu, canlı MAVLink telemetri tablosu, debug mask görünümü, JSON/UDP/MAVLink çalışma modları ve Pixhawk bağlantı paneli bulunur. PyQt6 veya PySide6 gerekir. Raspberry Pi OS için önerilen kurulum:
 
 ```bash
 sudo apt install python3-pyqt6
+```
+
+MacBook için:
+
+```bash
+./scripts/install_mac_gui.sh
+./scripts/run_macbook_gui.sh
 ```
 
 `Pixhawk / MAVLink` panelinde UDP için varsayılan dinleme adresi `udpin:0.0.0.0:14550` değeridir. Heartbeat gelince GUI mode/armed, attitude, local/global position, altitude, airspeed, groundspeed, battery, GPS, pressure, RC RSSI ve son görülen raw MAVLink mesaj alanlarını canlı listeler. USB-UART dönüştürücü yokken `simulation` seçilip `Connect` ile telemetry simülasyonu açılabilir. Gerçek dönüştürücü geldiğinde `serial`, `/dev/ttyUSB0`, `57600` veya `115200` seçilerek aynı panelden bağlanılır.

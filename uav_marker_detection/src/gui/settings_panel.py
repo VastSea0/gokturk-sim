@@ -20,24 +20,43 @@ class SettingsPanel(QtWidgets.QGroupBox):
         "Simulation/video test": "video_test",
     }
 
-    def __init__(self, config: Dict[str, Any], project_dir: Path, parent: Optional[QtWidgets.QWidget] = None) -> None:
+    def __init__(
+        self,
+        config: Dict[str, Any],
+        project_dir: Path,
+        parent: Optional[QtWidgets.QWidget] = None,
+        initial_settings: Optional[Dict[str, Any]] = None,
+    ) -> None:
         super().__init__("Run settings", parent)
         self.config = config
         self.project_dir = project_dir
+        self.initial_settings = initial_settings or {}
 
         self.mode_combo = QtWidgets.QComboBox()
         self.mode_combo.addItems(list(self.MODES.keys()))
 
         self.source_combo = QtWidgets.QComboBox()
         self.source_combo.addItems(["pi", "webcam", "video"])
+        initial_source = str(self.initial_settings.get("source", "pi"))
+        if self.source_combo.findText(initial_source) >= 0:
+            self.source_combo.setCurrentText(initial_source)
 
-        self.video_edit = QtWidgets.QLineEdit(str(project_dir / "sample_data" / "test.mp4"))
+        self.camera_index_spin = QtWidgets.QSpinBox()
+        self.camera_index_spin.setRange(0, 12)
+        self.camera_index_spin.setValue(int(self.initial_settings.get("camera_index", 0)))
+
+        initial_video = self.initial_settings.get("video") or str(project_dir / "sample_data" / "test.mp4")
+        self.video_edit = QtWidgets.QLineEdit(str(initial_video))
         self.video_browse_button = QtWidgets.QPushButton("Browse")
 
         self.detector_combo = QtWidgets.QComboBox()
         self.detector_combo.addItems(["hybrid", "color", "hsv", "yolo", "yolo_seg"])
+        initial_detector = str(self.initial_settings.get("detector", "color"))
+        if self.detector_combo.findText(initial_detector) >= 0:
+            self.detector_combo.setCurrentText(initial_detector)
         yolo_cfg = config.get("detection", {}).get("yolo", {})
-        self.weights_edit = QtWidgets.QLineEdit(str(project_dir / yolo_cfg.get("weights_path", "models/best.pt")))
+        initial_weights = self.initial_settings.get("weights") or str(project_dir / yolo_cfg.get("weights_path", "models/best.pt"))
+        self.weights_edit = QtWidgets.QLineEdit(str(initial_weights))
         self.weights_browse_button = QtWidgets.QPushButton("Browse")
         self.debug_view_combo = QtWidgets.QComboBox()
         self.debug_view_combo.addItems(["overlay", "mask_overlay", "mask_red", "mask_blue", "mask_combined"])
@@ -81,6 +100,7 @@ class SettingsPanel(QtWidgets.QGroupBox):
         form.setSpacing(10)
         form.addRow("Mode", self.mode_combo)
         form.addRow("Source", self.source_combo)
+        form.addRow("Webcam index", self.camera_index_spin)
         form.addRow("Video", self._row(self.video_edit, self.video_browse_button))
         form.addRow("Detector", self.detector_combo)
         form.addRow("YOLO weights", self._row(self.weights_edit, self.weights_browse_button))
@@ -108,12 +128,14 @@ class SettingsPanel(QtWidgets.QGroupBox):
         layout.addLayout(buttons)
 
         self.mode_combo.currentTextChanged.connect(self._mode_changed)
+        self.source_combo.currentTextChanged.connect(self._source_changed)
         self.video_browse_button.clicked.connect(self._browse_video)
         self.weights_browse_button.clicked.connect(self._browse_weights)
         self.start_button.clicked.connect(self._emit_start)
         self.stop_button.clicked.connect(self.stop_requested.emit)
         self.detector_combo.currentTextChanged.connect(self._detector_changed)
         self._mode_changed(self.mode_combo.currentText())
+        self._source_changed(self.source_combo.currentText())
         self._detector_changed(self.detector_combo.currentText())
 
     def runtime_settings(self) -> Dict[str, Any]:
@@ -125,6 +147,7 @@ class SettingsPanel(QtWidgets.QGroupBox):
         return {
             "mode": mode,
             "source": source,
+            "camera_index": self.camera_index_spin.value(),
             "video": self.video_edit.text().strip(),
             "detector": self.detector_combo.currentText(),
             "weights": self.weights_edit.text().strip(),
@@ -174,6 +197,9 @@ class SettingsPanel(QtWidgets.QGroupBox):
         yolo_enabled = text in {"hybrid", "yolo", "yolo_seg"}
         self.weights_edit.setEnabled(yolo_enabled)
         self.weights_browse_button.setEnabled(yolo_enabled)
+
+    def _source_changed(self, text: str) -> None:
+        self.camera_index_spin.setEnabled(text == "webcam")
 
     def _browse_video(self) -> None:
         path, _ = QtWidgets.QFileDialog.getOpenFileName(

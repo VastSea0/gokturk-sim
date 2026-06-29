@@ -28,30 +28,37 @@ Then:
 
 ```bash
 cd uav_marker_detection
-chmod +x scripts/run_macbook_yolo.sh
-./scripts/run_macbook_yolo.sh
+chmod +x scripts/install_mac_gui.sh scripts/run_macbook_gui.sh
+./scripts/install_mac_gui.sh --with-yolo
+./scripts/run_macbook_gui.sh
 ```
 
-Press `q` in the OpenCV window to quit.
+The full GUI opens with `Source=webcam` by default on MacBook. Use `Webcam index` if the wrong camera opens. Press `Stop` or close the window to quit.
+
+The OpenCV preview runner is still available:
+
+```bash
+./scripts/run_macbook_yolo.sh
+```
 
 The MacBook runner uses `DETECTOR=hybrid` by default. Hybrid mode runs the trained YOLO model, rejects YOLO boxes that do not contain matching red/blue pixels, and adds high-confidence adaptive color detections that YOLO misses. This is the recommended live test mode for the current synthetic-only model.
 
 If the wrong camera opens:
 
 ```bash
-CAMERA_INDEX=1 ./scripts/run_macbook_yolo.sh
+python3 src/gui/app.py --source webcam --camera-index 1
 ```
 
 ## 3. Run with Sample Video
 
 ```bash
-SOURCE=video ./scripts/run_macbook_yolo.sh
+./scripts/run_gui.sh --source video --video sample_data/test.mp4
 ```
 
 Or with another video:
 
 ```bash
-SOURCE=video VIDEO=/path/to/test.mp4 ./scripts/run_macbook_yolo.sh
+./scripts/run_gui.sh --source video --video /path/to/test.mp4
 ```
 
 ## 4. Run with Explicit Weights
